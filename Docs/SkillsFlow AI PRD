@@ -1,0 +1,290 @@
+Sure — here’s your **SkillFlow AI PRD** formatted in clean, production-ready **Markdown**:
+
+---
+
+# 🧠 MVP Product Requirements Document (PRD)
+
+**Project Name:** SkillFlow AI
+**Version:** 0.9 (MVP Draft)
+**Author:** Quintus de Wet
+**Goal:** Create a proof-of-concept web app that demonstrates intelligent AI skill orchestration and workflow execution inspired by Anthropic’s *Claude Skills*.
+
+---
+
+## 1. 🎯 Purpose & Overview
+
+### Objective
+
+Build a web-based **chat interface** powered by OpenAI’s GPT-5 (thinking model) that can:
+
+* Interpret user requests
+* Dynamically select relevant **skills** (structured task modules)
+* Execute **multi-step workflows** (predefined sequences using specific skills)
+* Return **structured and formatted results** in real time
+
+This app will serve as a **proof of concept** for a future extensible agent platform similar in spirit to *Claude Code Skills* and Anthropic’s modular skill design.
+
+---
+
+## 2. 🧩 Core Concepts
+
+### 2.1. Skill
+
+A **Skill** is a self-contained capability — e.g., “Web Research”, “Summarization”, or “Generate Report”.
+
+Each skill consists of:
+
+```yaml
+name: Web Research
+description: Performs deep web-based research on any topic.
+version: 1.0.0
+allowed-tools: [web_search]
+```
+
+#### Markdown Body
+
+Contains the detailed procedure, examples, and optional code snippets.
+
+#### Optional Logic File
+
+May include a JS/Python implementation (e.g., `logic.js`).
+
+**Example Folder Structure**
+
+```
+/skills/
+  ├── research/
+  │     ├── SKILL.md
+  │     └── logic.js
+  ├── summarizer/
+  │     ├── SKILL.md
+  │     └── summarize.js
+```
+
+**Runtime Behavior**
+
+* The agent scans all skills and preloads only metadata.
+* Loads full `SKILL.md` and optional code dynamically when invoked.
+* Mimics *progressive disclosure* from Anthropic’s design.
+
+---
+
+### 2.2. Workflow
+
+A **Workflow** is a named, multi-step process — each step can call one or more skills.
+
+```yaml
+name: Deep Research Workflow
+description: Conducts in-depth research with multi-step reasoning
+steps:
+  - step: Define research plan
+    skill: research_planner
+  - step: Perform web search
+    skill: web_search
+  - step: Synthesize insights
+    skill: summarizer
+  - step: Generate report
+    skill: report_writer
+output: formatted_report
+```
+
+**Location:** `/workflows/`
+**Format:** YAML or JSON
+**Behavior:** Sequential execution with each step referencing a skill.
+
+---
+
+## 3. ⚙️ System Architecture
+
+### 3.1. Frontend
+
+**Tech Stack:** Next.js 15 + React + TailwindCSS + ShadCN + Lucide Icons
+
+**Libraries**
+
+* `ai@latest` (Vercel AI SDK v5)
+* `@vercel/ai-ui` for chat interface
+* `zustand` or `react-query` for state
+* `framer-motion` for transitions
+
+**Components**
+
+* **Chat Interface:** Real-time streaming
+* **Skill Activity Viewer:** Shows which skill/workflow is active
+* **Execution Timeline:** Displays step-by-step progress
+* **Output Renderer:** Converts Markdown to rich UI
+
+---
+
+### 3.2. Backend (Server Actions / Edge Functions)
+
+**Environment:** Vercel Edge Runtime (Node 18+)
+
+**AI Orchestration**
+
+* Master Agent: GPT-5 (reasoning model)
+* Implemented with Vercel’s `Agent` + `Runner` APIs
+* Skills are dynamically registered as **tools**
+
+**Flow**
+
+1. User message → AI SDK UI sends to `/api/agent`
+2. Orchestrator analyzes intent
+3. Selects a **skill** or **workflow**
+4. Executes step(s) with dynamic imports
+5. Streams results to the UI
+
+**APIs**
+
+```
+/api/skills       → Loads and parses skill metadata
+/api/workflows    → Loads workflow definitions
+/api/agent        → Handles chat + orchestration
+```
+
+---
+
+### 3.3. Data Flow Diagram
+
+```
+User
+ │
+ ▼
+Chat Interface (AI SDK UI)
+ │
+ ▼
+Orchestrator Agent (GPT-5 Thinking)
+ │
+ ├─> Skill Loader (reads SKILL.md)
+ │    ├─ Parses metadata
+ │    ├─ Dynamically imports logic
+ │    └─ Returns skill output
+ │
+ └─> Workflow Executor
+      ├─ Loads workflow.yaml
+      ├─ Executes each step (calls Skill Loader)
+      └─ Aggregates results
+ │
+ ▼
+Output Formatter (Markdown → Rich UI)
+```
+
+---
+
+## 4. 🧠 AI Orchestration Logic
+
+### 4.1. Skill Discovery
+
+* On startup, the backend reads `/skills/**/SKILL.md`
+* Extracts metadata (name + description)
+* Sends metadata to GPT-5 context for awareness
+
+### 4.2. Skill Activation
+
+1. Agent matches user request → skill description
+2. Loads full `SKILL.md` and executes logic if needed
+3. Streams response to chat interface
+
+### 4.3. Workflow Execution
+
+1. Loads `workflow.yaml`
+2. Runs steps sequentially
+3. Calls corresponding skills
+4. Streams intermediate outputs
+5. Combines results into final response
+
+### 4.4. Example Flow
+
+**User:** “Do deep research on urban solar policy.”
+**Agent Steps:**
+
+1. `research_planner` → Define outline
+2. `web_search` → Collect data
+3. `summarizer` → Analyze
+4. `report_writer` → Generate final report
+
+---
+
+## 5. 💅 UI/UX Design
+
+**Style:** Clean, minimal, professional
+**Palette:**
+`#2B2D42` | `#8D99AE` | `#EDF2F4` | `#EF233C` | `#D90429`
+
+### Layout
+
+* **Left:** Skill/Workflow sidebar
+* **Center:** Chat panel
+* **Right:** Execution timeline
+
+### Chat Example
+
+```
+👤 You: Do an in-depth analysis on renewable housing.
+🤖 Agent: Sure! I'll use the Deep Research workflow.
+     Step 1: Planning research... ✅
+     Step 2: Collecting data... ✅
+     Step 3: Synthesizing insights... ✅
+     Step 4: Generating report... ✅
+🧾 Final Report: [Rendered Markdown content]
+```
+
+---
+
+## 6. 🔐 Security & Sandbox
+
+* Skills run in an **isolated sandbox**
+* Only whitelisted tools and APIs allowed
+* Optional confirmation prompts for elevated actions
+
+---
+
+## 7. 🚀 MVP Deliverables
+
+| Component        | Description                           | Status   |
+| ---------------- | ------------------------------------- | -------- |
+| Chat UI          | Streaming chat via AI SDK UI          | ✅        |
+| Skill Loader     | YAML + Markdown parser                | ✅        |
+| Workflow Engine  | Step sequencer with progress tracking | ✅        |
+| AI Integration   | GPT-5 reasoning orchestrator          | ✅        |
+| Execution Viewer | Timeline view of steps                | ✅        |
+| File System      | Skills + workflows registry           | ✅        |
+| Code Sandbox     | Execute JS skill logic                | Optional |
+| Styling          | AI Vantage palette + Lucide icons     | ✅        |
+
+---
+
+## 8. 📦 Folder Structure
+
+```
+/src
+ ├── app/
+ │    ├── page.tsx
+ │    ├── api/
+ │    │     ├── agent/route.ts
+ │    │     ├── skills/route.ts
+ │    │     └── workflows/route.ts
+ │    └── components/
+ │          ├── ChatUI.tsx
+ │          ├── SkillViewer.tsx
+ │          ├── WorkflowTimeline.tsx
+ │          └── OutputRenderer.tsx
+ ├── lib/
+ │    ├── skills.ts
+ │    ├── workflows.ts
+ │    ├── orchestrator.ts
+ │    └── formatter.ts
+/skills
+/workflows
+```
+
+---
+
+## 9. 🧰 Future Extensions
+
+* Skill marketplace (import/export)
+* Visual workflow editor
+* Multi-agent collaboration
+* Integration with third-party APIs
+* Long-term memory (Zep or Mem0)
+

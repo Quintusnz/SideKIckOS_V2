@@ -1,0 +1,221 @@
+Claude Code Skills: Technical Integration and Usage
+What Are Claude Skills?
+Anthropic’s Claude Skills are a new way to extend Claude’s abilities by providing it with modular “skills” packaged as files and code. A Skill is essentially a folder containing a special instruction file and optional resources or scripts
+anthropic.com
+. Each Skill teaches Claude how to perform a specific task or workflow in a consistent, repeatable way. For example, there are Anthropic-built Skills for creating Excel spreadsheets, PowerPoint slides, or PDF editing – tasks that go beyond Claude’s base knowledge
+anthropic.com
+. Crucially, Claude will only load a Skill when it’s relevant to the user’s request, so these extensions don’t clutter the prompt unless needed
+anthropic.com
+. This design lets Claude handle specialized tasks (like applying company style guides or parsing complex file formats) more reliably than with prompts alone
+anthropic.com
+. Under the hood, Skills work via progressive disclosure. Claude scans available Skills and selectively loads their contents as needed, rather than stuffing all instructions into the context up front
+anthropic.com
+anthropic.com
+. In effect, Skills act like on-demand “plugin” modules: they package domain-specific expertise (instructions, examples, and even code) that Claude can tap into dynamically to improve performance on those tasks
+anthropic.com
+. This system is model-invoked – unlike a manual command or plugin invocation, you do not explicitly call a Skill; Claude’s AI itself decides when to use a Skill based on your query and the Skill’s description
+docs.claude.com
+docs.claude.com
+. This makes Skills seamless in use: if you ask Claude to do something that a Skill covers (say, “format this document with our brand style guide”), Claude will automatically activate the relevant Skill in the background.
+Structure of a Skill (SKILL.md Manifest)
+Every custom Skill is defined by a file called SKILL.md residing in the Skill’s folder (the folder name typically being the skill’s name)
+github.com
+support.claude.com
+. This SKILL.md file is the core manifest and it has a very specific structure:
+It begins with a YAML frontmatter section (delimited by --- at top) containing at least two required fields: a name for the skill and a description of what the skill does and when to use it
+anthropic.com
+support.claude.com
+. These metadata fields are critical. The name is a human-friendly identifier, and the description (often one or two sentences, max ~200 characters) should clearly state the skill’s purpose and the contexts in which Claude should invoke it
+support.claude.com
+. Claude relies on this description text to decide if a skill is relevant to a user’s request
+support.claude.com
+docs.claude.com
+.
+After the YAML frontmatter, the rest of the file is written in Markdown. This Markdown body contains the detailed instructions, guidelines, or steps that Claude should follow when the skill is active
+docs.claude.com
+support.claude.com
+. Essentially, this is the procedural knowledge or “how-to” that you are teaching Claude. You can include structured sections, examples of usage, and any other details that Claude needs to execute the task properly
+docs.claude.com
+support.claude.com
+. For instance, a Skill might have sections like “## Steps to Complete the Task” or “## Examples” demonstrating the skill’s usage
+docs.claude.com
+docs.claude.com
+.
+Optionally, the Skill’s folder can contain additional files alongside SKILL.md – for example, reference documents (.md files with supplementary info), data templates, or scripts (executable code) in subdirectories
+docs.claude.com
+docs.claude.com
+. The SKILL.md can hyperlink to these files or mention them. This modular design allows you to keep the main skill instructions concise while offloading lengthy details or code to separate files. Notably, you can provide helper scripts or libraries in a scripts/ folder, or templates in a templates/ folder, and reference them in the markdown (e.g. “Run the helper script with python scripts/helper.py ...”)
+docs.claude.com
+docs.claude.com
+. There are additional YAML fields you can include in the frontmatter if needed:
+Version: e.g. version: 1.0.0 to track the skill’s version
+support.claude.com
+.
+Dependencies: to specify any packages the skill needs (Claude’s environment can auto-install Python or Node packages when loading a skill)
+support.claude.com
+support.claude.com
+.
+Allowed tools: an important one for Claude Code – allowed-tools lets you restrict which tools/commands Claude can use when this skill is active
+docs.claude.com
+. By default, Claude (especially in Claude Code) follows a permission model for executing code or using filesystem tools. But if your skill only requires certain tools, you can whitelist them here. For example, a read-only data analysis skill might set allowed-tools: Read, Grep, Glob to tell Claude it’s permitted to use file-reading and search tools (and nothing else) without needing extra user permission
+docs.claude.com
+docs.claude.com
+. If allowed-tools is not specified, Claude will just ask for approval normally when it tries to use any tool, as per the standard Claude Code sandbox security model
+docs.claude.com
+.
+In summary, the SKILL.md serves as a manifest with metadata and instructions. Anthropic describes this as a progressive disclosure design
+support.claude.com
+: the YAML metadata is the first layer (minimal info for discovery), the Markdown content is the second layer (detailed guidance loaded when needed), and any extra files/scripts represent further layers that can be loaded on demand for even more detail
+anthropic.com
+anthropic.com
+.
+How Claude Code Loads and Uses Skills
+When you launch Claude Code (or any Claude environment with Skills enabled), the system scans all installed skills and makes their metadata available to the AI agent from the start. In practice, at startup Claude will pre-load each skill’s name and description into its system prompt or context (usually as part of the hidden system instructions)
+anthropic.com
+anthropic.com
+. This means Claude always has a “table of contents” of available skills in mind: just the brief descriptions, which only take a few tokens each
+simonwillison.net
+. By doing this, Claude knows (in a broad sense) what each skill can do, without yet knowing the full details of how. For example, if you have a skill named "Brand Guidelines" with description “Apply Acme Corp brand guidelines to documents and slides,” Claude’s initial context will include that snippet of text. This metadata is enough for Claude to think “Hmm, the user is asking for formatting a slide deck with corporate styles – I have a skill for that!” without yet loading the entire skill file. Skill invocation is automatic: when you ask Claude to perform a task, the model itself will decide if any skill’s description matches the request. If it deems a skill relevant to the query, Claude will “trigger” that skill
+docs.claude.com
+docs.claude.com
+. Technically, what happens is Claude will load the full content of that skill’s SKILL.md (the second layer of detail) into the conversation context. In Claude Code, this is accomplished by the AI agent using its tools to read the file from disk. For instance, Anthropic’s engineering blog describes that Claude will invoke a bash/file-read command to open the skill’s SKILL.md file when it decides to use that skill
+anthropic.com
+. Once the SKILL.md is read, all the instructions and information in it become part of Claude’s working context (just as if they were a long system prompt telling Claude how to do the specialized task). From this point on, Claude will follow the instructions in the Skill file to execute your task. The skill’s Markdown might include step-by-step guidance, specific commands to run, or format templates to use – effectively teaching Claude the procedure. Because the skill content is now in context, Claude will incorporate those instructions into its reasoning and responses. It’s as if you provided a detailed, task-specific prompt, but it was fetched automatically from the skill. Importantly, Claude may also load any additional resources linked in the Skill, but only if needed. This is the next stage of progressive disclosure. If the SKILL.md file references other files in the skill folder (for example, “see reference.md for advanced usage” or “use the template in template.txt”), Claude can choose to open those files as well – but it will only do so selectively when the context calls for it
+anthropic.com
+anthropic.com
+. For example, Anthropic’s PDF-handling skill keeps some instructions about filling PDF forms in a separate forms.md file. Claude will only bother to read forms.md if the user’s request involves PDF forms; if not, it doesn’t waste context on it
+anthropic.com
+anthropic.com
+. The Claude docs emphasize that Claude “reads these files only when needed, using progressive disclosure to manage the context efficiently”
+docs.claude.com
+. This design lets skills include a lot of knowledge (even potentially large reference text or code) without blowing the context window, since Claude treats the skill’s folder like an on-demand knowledge base. To summarize the runtime flow in Claude Code:
+Initialization: Claude’s system prompt is seeded with the metadata (name & description) of every installed skill
+anthropic.com
+. At this stage, each skill only occupies a tiny bit of the model’s context.
+User prompt analysis: When you send a query or instruction, Claude considers whether any skill descriptions seem relevant to fulfilling that request
+docs.claude.com
+. The decision is based on the description text, so writing a clear description of when to use the skill is vital.
+Skill activation: If a particular skill is a good match, Claude activates it by loading the skill’s content. In practice Claude uses the Code toolset to read the SKILL.md file from the skill’s directory into its context
+anthropic.com
+. Now the full instructions of that skill are available to guide Claude.
+Optional deeper loading: If the skill’s instructions refer to other files (say, a detailed appendix or an example dataset or a script), Claude might choose to load those too, but only if the situation warrants. It can recursively fetch additional context in this manner, one file at a time, as needed
+anthropic.com
+anthropic.com
+.
+Task execution: With the skill’s guidance in place, Claude proceeds to carry out the user’s task, now equipped with whatever special knowledge or procedure the skill provided
+anthropic.com
+. You will see the results in Claude’s answer or in any files it creates.
+All of this happens behind the scenes. From the user’s perspective, you simply asked Claude to do something and it did it with surprising competence – thanks to the skill supplementing its abilities. In Claude Code’s UI, you might notice (if chain-of-thought visibility is on) that Claude decided to use a skill and ran some commands (like open file .../SKILL.md). But you don’t have to manually invoke anything; the agent handles it.
+Executing Code within Skills
+One of the most powerful aspects of Claude Skills is that they can include executable code which Claude can run as part of solving your problem. This goes beyond static instructions – it means you can hand Claude a purpose-built script or tool and have it use that to get deterministic, reliable results
+anthropic.com
+anthropic.com
+. Claude Code operates within a secure sandbox (the “Code Execution” tool environment), so it’s able to run code in languages like Python, JavaScript, etc., and use libraries, just like other coding assistants. Skills leverage this by packaging code for specialized tasks: For example, consider the PDF skill mentioned earlier. Parsing and extracting data from PDFs can be tricky for an LLM to do with pure text prompts (and would waste a lot of tokens). So the PDF skill comes with a pre-written Python script that knows how to open a PDF file and extract all its form fields and values
+anthropic.com
+. When Claude is using that skill to, say, fill out or read a PDF form, it will execute that Python script directly rather than trying to parse the PDF via its language understanding. Claude knows to do this because the skill’s instructions tell it about the script (or the presence of the script as a tool). The engineering team notes that Claude can run the script “without loading either the script or the PDF into context”, yielding a result that is “consistent and repeatable”
+anthropic.com
+. In essence, the LLM delegates the heavy lifting to classical code where appropriate. When a skill includes code, Claude will typically generate an action to run that code. In the Claude Code interface, this might appear as Claude writing a code cell or command (e.g. a Python code block) that calls the skill’s script. The skill’s folder is mounted in Claude’s execution environment (often under a path like /mnt/skills/...), so Claude can import modules or run scripts from the skill package directly
+simonwillison.net
+simonwillison.net
+. A real example is the “slack-gif-creator” skill: when Claude used it to generate an animated GIF, it wrote a Python script that did the following: inserted the skill’s directory into sys.path, imported a helper class provided by the skill (for constructing the GIF), and then used that class to build and save the animation
+simonwillison.net
+simonwillison.net
+. In doing so, Claude leveraged code bundled with the skill (like image processing logic and Slack file size validators) rather than attempting to generate all that logic itself. This highlights how Skills can give Claude new “tools” in the form of code – if the skill provides a function or library, the model can call it to perform complex operations (image creation, data analysis, file format conversion, etc.) with accuracy and efficiency. From a technical standpoint, Skills require the Claude environment to have the Code Execution feature enabled, because without a sandbox to run code and a filesystem to read files, the skill mechanism wouldn’t function
+support.claude.com
+. Anthropic specifically notes that Skills are available only when code execution is on (for Claude.in browsers, or via Claude Code, or via the API tool use)
+support.claude.com
+. The sandbox keeps things secure – for instance, any code run from a skill is executed in isolation, and there are guardrails (like requiring user confirmation for certain operations unless whitelisted by allowed-tools as discussed). Still, executing code does carry some risk: Anthropic advises caution to only install or enable Skills from trusted sources, because a malicious skill could contain harmful instructions or scripts
+anthropic.com
+. In other words, Skills are powerful – giving Claude essentially the ability to run arbitrary code – so they should be treated with the same security mindset as you would when running untrusted software.
+Integrating Skills into Claude Code
+Now, how do you actually provide these skills to Claude Code? Since this feature is brand new, Anthropic has a couple of methods to integrate skills into your Claude Code setup:
+Claude Code Plugins (Skill Marketplace): Anthropic has a public GitHub repository (anthropics/skills) with many example skills (including the official document skills for PDF, Excel, etc., and community-contributed ones)
+github.com
+github.com
+. Claude Code provides a plugin interface where you can add this repository as a plugin source and install skills from it. The Claude Skills Marketplace is essentially a curated collection of skill folders. For instance, you can run a command like /plugin marketplace add anthropics/skills in Claude Code, then choose and install skills or whole skill packs from there
+github.com
+github.com
+. Once installed, those skills become available in your environment just like built-in ones. According to Anthropic, after you install (say) the document-skills pack via the plugin, you can simply ask Claude to use it (e.g., “Use the PDF skill to extract form fields from file X”) and Claude will recognize and load that skill automatically
+github.com
+.
+Local Skill Folders: You can also create or add skills manually on your filesystem. Claude Code looks in specific directories for skills. For a single user, you can put your custom skill folders in ~/.claude/skills/ on your machine
+anthropic.com
+. Claude Code will scan that directory at startup and register any skills it finds there (these are often called Personal Skills – they apply to your Claude environment everywhere)
+docs.claude.com
+docs.claude.com
+. If you’re working in a shared project with a team, there’s a concept of Project Skills: you include a .claude/skills/ folder within your project repository and commit your skill folders into it
+docs.claude.com
+docs.claude.com
+. Team members who pull the project will all have access to those project-specific skills, and Claude will detect them for anyone working on that project. This is a great way to share organization-specific skills via version control (the skill behaves almost like part of your codebase). In both cases, Claude automatically discovers and loads the skill metadata from these locations – there’s no further configuration needed beyond placing the files in the right spot
+anthropic.com
+. The next time you start Claude Code, it will list those skills when asked and consider them during conversation.
+Once a skill is installed (via plugin or manually), using it is as described earlier – Claude will invoke it as needed. You can even ask Claude “What skills are available?” to get a list of all discovered skills in your Claude Code environment
+docs.claude.com
+docs.claude.com
+. The skills are portable across Claude’s platforms: the same skill format works in Claude Code, the Claude web UI, and the Claude API as well
+anthropic.com
+anthropic.com
+. For API usage, developers can upload skill packages through an endpoint and include skill IDs in API calls, but the underlying mechanism (model sees skill descriptions, then reads files if needed) remains the same
+anthropic.com
+anthropic.com
+.
+Key Technical Takeaways
+In summary, Claude’s new Skills feature introduces a plugin-like system based on simple Markdown files and optional code, which the model can interpret and integrate at runtime to extend its capabilities:
+The Skill file (SKILL.md) acts as a manifest with a YAML header (for discovery metadata) and Markdown instructions (the procedural knowledge)
+anthropic.com
+docs.claude.com
+. Claude uses the metadata to decide when to load the skill, and the content to know how to perform the task.
+Claude Code pre-loads skill metadata into the system prompt at session start
+anthropic.com
+anthropic.com
+. Each skill’s name/description only consumes a few tokens, making this scalable to many skills without context issues
+simonwillison.net
+.
+When a user’s request matches a skill’s trigger conditions, Claude dynamically loads the skill’s content by reading the file from the filesystem into the chat context
+anthropic.com
+anthropic.com
+. This is initiated by the model itself (no user command needed).
+Skills can be multi-file: Claude will fetch additional referenced files on demand, following links in the SKILL.md, which enables virtually unbounded context via the filesystem (a form of external memory)
+anthropic.com
+docs.claude.com
+.
+Skills may include executable code. Claude can run these skill-provided scripts or libraries in the secure sandbox, which is often far more efficient or accurate for certain tasks (e.g. data processing, external API calls, complex computations)
+anthropic.com
+. The model knows to use these because the skill instructions or prior design pattern indicate when to invoke the code.
+In Claude Code, skills are integrated via the plugin system or special directories, and are automatically loaded when relevant – truly treating them as pluggable AI abilities
+anthropic.com
+. The system also provides features like allowed-tools to sandbox what a skill can do, ensuring some control over the agent’s actions while that skill is in effect
+docs.claude.com
+docs.claude.com
+.
+From a developer perspective, this architecture can be replicated: it’s essentially an agent design where you maintain a library of task-specific instructions (with metadata tags) and allow the LLM to fetch those instructions and any helper code as needed. The combination of structured skill manifests + a filesystem + code execution is what empowers Claude Skills to function as a flexible, extensible “agent skillset” rather than just static prompts.
+Overall, Skills for Claude Code turn the assistant into a more general-purpose agent that can be taught new capabilities on the fly. By understanding the mechanism – YAML frontmatter for discovery, on-demand file I/O for loading instructions, and sandboxed code execution – you can implement a similar pattern in your own app. It requires giving your AI access to a storage of skill files and possibly a safe execution environment. But as Anthropic’s implementation shows, this approach can greatly expand an AI’s functionality in a controlled and modular way
+anthropic.com
+anthropic.com
+. The feature is brand new (announced in Oct 2025), and while tooling around it is evolving, the core idea is straightforward and powerful: teach the AI new skills by providing it with focused written guidance and tools, and let it decide when to apply them
+anthropic.com
+simonwillison.net
+. Sources:
+Anthropic News Blog – Introducing Agent Skills
+anthropic.com
+anthropic.com
+Anthropic Engineering Blog – Equipping agents with Agent Skills
+anthropic.com
+anthropic.com
+anthropic.com
+Claude Help Center – What are Skills? and How to create custom Skills
+support.claude.com
+support.claude.com
+support.claude.com
+Claude Official Documentation – Agent Skills (Claude Code)
+docs.claude.com
+docs.claude.com
+docs.claude.com
+Simon Willison’s Weblog – Claude Skills are awesome... (experiments and analysis)
+simonwillison.net
+simonwillison.net
+Citations
+
+Claude Skills: Customize AI for your workflows \ Anthropic
+
+https://www.anthropic.com/news/skills
