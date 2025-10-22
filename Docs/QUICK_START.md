@@ -10,7 +10,7 @@
 
 ### 1. Start Development Server
 ```bash
-cd skillsflow
+cd "SkillsFlow AI"
 npm run dev
 ```
 Then open: http://localhost:3000
