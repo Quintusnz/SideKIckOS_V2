@@ -47,7 +47,7 @@ Contains the detailed procedure, examples, and optional code snippets.
 
 #### Optional Logic File
 
-May include a JS/Python implementation (e.g., `logic.js`).
+May include a TypeScript or JavaScript implementation (e.g., `logic.ts` with ts-node support or `logic.js`).
 
 **Example Folder Structure**
 
@@ -55,7 +55,7 @@ May include a JS/Python implementation (e.g., `logic.js`).
 /skills/
   ├── research/
   │     ├── SKILL.md
-  │     └── logic.js
+  │     └── logic.ts        # Optional implementation (logic.js also supported)
   ├── summarizer/
   │     ├── SKILL.md
   │     └── summarize.js
@@ -103,7 +103,7 @@ output: formatted_report
 **Libraries**
 
 * `ai@latest` (Vercel AI SDK v5)
-* `@vercel/ai-ui` for chat interface
+* `@ai-sdk/react` `useChat()` hook for chat interface
 * `zustand` or `react-query` for state
 * `framer-motion` for transitions
 

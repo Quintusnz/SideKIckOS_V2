@@ -1,4 +1,4 @@
-# SkillsFlow AI - Complete Documentation Index
+# SideKick - Complete Documentation Index
 
 **Created:** October 22, 2025  
 **All Documents Ready for Review**

@@ -1,0 +1,34 @@
+name: Academic Paper Analysis
+description: Research and generate academic-style report
+version: 1.0.0
+
+steps:
+  - id: literature_research
+    skill: web_research
+    input:
+      query: "{{ topic }} research literature"
+      depth: deep
+      max_sources: 5
+    timeout: 30000
+    retry:
+      max_attempts: 2
+
+  - id: create_summary
+    skill: summarizer
+    depends_on: [literature_research]
+    input:
+      content: "{{ steps.literature_research.findings }}"
+      style: paragraphs
+      max_words: 400
+    timeout: 20000
+
+  - id: academic_report
+    skill: report_writer
+    depends_on: [create_summary]
+    input:
+      title: "Academic Analysis: {{ topic }}"
+      content: "{{ steps.create_summary.content }}"
+      style: academic
+      include_toc: true
+      include_appendix: true
+    timeout: 25000

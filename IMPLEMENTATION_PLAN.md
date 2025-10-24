@@ -52,7 +52,7 @@ A self-contained, reusable capability that the orchestrator can invoke to solve 
 /skills/
 ├── research/
 │   ├── SKILL.md          # Metadata + instructions
-│   ├── logic.js          # (Optional) Implementation
+│   ├── logic.ts          # (Optional) Implementation (logic.js also supported)
 │   └── package.json      # (Optional) Dependencies
 │
 ├── summarizer/
@@ -62,7 +62,7 @@ A self-contained, reusable capability that the orchestrator can invoke to solve 
 │
 └── report_writer/
     ├── SKILL.md
-    └── (no logic.js - AI-only)
+  └── (no logic.ts - AI-only)
 ```
 
 #### Skill Metadata (SKILL.md format)
@@ -144,7 +144,7 @@ class SkillRegistry {
     // For each folder:
     //  1. Parse SKILL.md (extract YAML frontmatter)
     //  2. Store metadata in registry
-    //  3. DO NOT load logic.js yet (lazy-load on demand)
+    //  3. DO NOT load logic.ts/logic.js yet (lazy-load on demand)
   }
 
   async getSkillMetadata(): Promise<SkillMetadata[]> {
@@ -153,7 +153,7 @@ class SkillRegistry {
 
   async invokeSkill(skillName: string, input: any): Promise<any> {
     // 1. Load full SKILL.md
-    // 2. Dynamically import logic.js if exists
+    // 2. Dynamically import logic.ts (preferred) or logic.js if it exists
     // 3. Execute logic with input
     // 4. Return output (could be streaming)
   }
@@ -325,8 +325,8 @@ class WorkflowExecutor {
                                       │
         ┌─────────────────────────────┘
         │
-        ├─ SKILL EXECUTION
-        │  └─ Load logic.js
+  ├─ SKILL EXECUTION
+  │  └─ Load logic.ts (or logic.js)
         │  └─ Execute with input
         │  └─ Return output
         │
@@ -779,7 +779,7 @@ skillsflow-ai/
 ├── skills/                      # Skill library
 │   ├── research/
 │   │   ├── SKILL.md
-│   │   └── logic.js
+│   │   └── logic.ts   # Optional implementation (logic.js also supported)
 │   ├── summarizer/
 │   │   ├── SKILL.md
 │   │   └── logic.ts

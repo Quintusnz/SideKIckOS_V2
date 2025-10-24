@@ -7,11 +7,13 @@ import { describe, it, expect } from 'vitest';
 import type {
   SkillMetadata,
   Skill,
+  SkillInvocationInput,
   Message,
   ToolInvocation,
   WorkflowStep,
   Workflow,
-} from '../types';
+  JsonValue,
+} from '@/types';
 
 describe('SkillMetadata Type', () => {
   it('should have all required properties', () => {
@@ -81,12 +83,17 @@ describe('Skill Type', () => {
         output_format: 'text',
       },
       markdown: '# Logic Skill',
-      logic: async (input: any) => {
-        return { result: input.value * 2 };
+      logic: async (input: SkillInvocationInput) => {
+        const value = typeof input.value === 'number' ? input.value : 0;
+        return { result: value * 2 };
       },
     };
 
     const result = await skill.logic!({ value: 5 });
+    if (!isJsonRecord(result) || typeof result.result !== 'number') {
+      throw new Error('Skill logic returned unexpected result shape');
+    }
+
     expect(result.result).toBe(10);
   });
 });
@@ -219,3 +226,7 @@ describe('Workflow Type', () => {
     expect(workflow.steps[1].depends_on).toContain('step-1');
   });
 });
+
+function isJsonRecord(value: JsonValue): value is Record<string, JsonValue> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}

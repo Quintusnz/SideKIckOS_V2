@@ -1,4 +1,4 @@
-# SkillsFlow AI - Clarification Q&A
+# SideKick - Clarification Q&A
 
 **Purpose:** Address ambiguities in the PRD and provide decision points  
 **Status:** Awaiting your input
@@ -30,7 +30,7 @@ const model = openai(process.env.AI_MODEL || 'gpt-4-turbo');
 
 ### Q2: Should skills be JavaScript/TypeScript executable or Markdown-only?
 
-**Context:** PRD shows both `SKILL.md` (instructions) and `logic.js` (optional code).
+**Context:** PRD shows both `SKILL.md` (instructions) and `logic.ts` (optional code, with logic.js also supported).
 
 **Options:**
 - **A)** Both supported (AI-interpreted markdown OR executable code)

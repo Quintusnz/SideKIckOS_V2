@@ -1,255 +1,211 @@
 'use client';
 
-/**
- * ChatInterface Component
- *
- * CRITICAL: Uses useChat() hook from @ai-sdk/react
- * This is mandatory for frontend chat components.
- *
- * Features:
- * - Real-time streaming messages
- * - Tool invocation display (shows which skills are being called)
- * - Auto message management (no Redux/Context needed)
- * - Error handling and retry logic
- * - Loading states and stop button
- */
-
-import React, { useEffect, useRef, useState } from 'react';
+import React, {
+  type ChangeEvent,
+  type FormEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useChat } from '@ai-sdk/react';
+import { DefaultChatTransport, type UIMessage } from 'ai';
+import type { ToolInvocation } from '@/types';
+import { cn } from '@/lib/utils';
 
-interface Message {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  toolInvocations?: any[];
+type SideKickMessage = UIMessage & {
+  role: 'user' | 'assistant' | 'system';
+  toolInvocations?: ToolInvocation[];
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
-export default function ChatInterface() {
-  const chatResult = useChat();
-  const [displayMessages, setDisplayMessages] = useState<Message[]>([]);
+function extractMessageText(parts: SideKickMessage['parts']): string {
+  return parts
+    .map((part) => {
+      switch (part.type) {
+        case 'text':
+        case 'reasoning':
+          return part.text;
+        case 'dynamic-tool':
+          return `[Dynamic tool: ${part.toolName}]`;
+        case 'source-url':
+          return `[Source: ${part.title ?? part.url}]`;
+        case 'source-document':
+          return `[Document: ${part.title}]`;
+        case 'file':
+          return `[File: ${part.filename ?? part.mediaType}]`;
+        case 'step-start':
+          return '[Step start]';
+        default: {
+          const type = typeof part.type === 'string' ? part.type : '';
+          if (type.startsWith('data-')) {
+            return '[Data]';
+          }
+          if (type.startsWith('tool-') && isRecord(part)) {
+            const recordPart = part as Record<string, unknown>;
+            const toolName = type.slice('tool-'.length) || 'tool';
+            const rawState = typeof recordPart.state === 'string' ? (recordPart.state as string) : 'pending';
+            if (rawState === 'output-available') {
+              return `[Tool ${toolName}: completed]`;
+            }
+            if (rawState === 'output-error') {
+              const errorText = typeof recordPart.errorText === 'string' ? ` – ${recordPart.errorText}` : '';
+              return `[Tool ${toolName}: error${errorText}]`;
+            }
+            return `[Tool ${toolName}: ${rawState}]`;
+          }
+          return '';
+        }
+      }
+    })
+    .filter((segment) => segment.length > 0)
+    .join('\n');
+}
 
-  // Auto-scroll to bottom on new messages
+type ChatInterfaceProps = {
+  className?: string;
+};
+
+export default function ChatInterface(props?: ChatInterfaceProps) {
+  const className = props?.className;
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [inputValue, setInputValue] = useState('');
+
+  const transport = useMemo(
+    () => new DefaultChatTransport<SideKickMessage>({ api: '/api/agent' }),
+    [],
+  );
+  const { messages, sendMessage, status, stop } = useChat<SideKickMessage>({
+    transport,
+  });
+
+  const isLoading = status === 'submitted' || status === 'streaming';
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [displayMessages]);
+  }, [messages]);
 
-  // Convert AI SDK messages to display format
-  useEffect(() => {
-    if (chatResult.messages) {
-      const converted = chatResult.messages.map((msg: any, idx: number) => ({
-        id: `${idx}`,
-        role: msg.role,
-        content: msg.content || '',
-        toolInvocations: msg.toolInvocations,
-      }));
-      setDisplayMessages(converted);
+  const handleInputChange = (event: ChangeEvent<HTMLInputElement>) => {
+    setInputValue(event.target.value);
+  };
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const trimmedInput = inputValue.trim();
+    if (!trimmedInput) {
+      return;
     }
-  }, [chatResult.messages]);
 
-  const [inputValue, setInputValue] = useState('');
-
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (!inputValue.trim()) return;
-
+    await sendMessage({ text: trimmedInput });
     setInputValue('');
+  };
 
-    try {
-      // Send message to backend
-      const response = await fetch('/api/agent', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: [
-            ...displayMessages.map((m) => ({
-              role: m.role,
-              content: m.content,
-            })),
-            { role: 'user', content: inputValue },
-          ],
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`API error: ${response.statusText}`);
-      }
-
-      // Read streaming response
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error('No response body');
-
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      // Add user message immediately
-      setDisplayMessages((prev) => [
-        ...prev,
-        {
-          id: Date.now().toString(),
-          role: 'user',
-          content: inputValue,
-        },
-      ]);
-
-      // Add empty assistant message to stream into
-      let assistantMessageId = Date.now().toString() + '_assistant';
-      setDisplayMessages((prev) => [
-        ...prev,
-        {
-          id: assistantMessageId,
-          role: 'assistant',
-          content: '',
-        },
-      ]);
-
-      // Process streaming response
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-
-        // Parse SSE events
-        const lines = buffer.split('\n');
-        buffer = lines[lines.length - 1]; // Keep incomplete line
-
-        for (let i = 0; i < lines.length - 1; i++) {
-          const line = lines[i];
-
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6);
-
-            if (data === '[DONE]') {
-              continue;
-            }
-
-            try {
-              const parsed = JSON.parse(data);
-
-              if (parsed.type === 'text-delta') {
-                // Update assistant message with streamed text
-                setDisplayMessages((prev) =>
-                  prev.map((msg) =>
-                    msg.id === assistantMessageId ? { ...msg, content: msg.content + parsed.delta } : msg
-                  )
-                );
-              } else if (parsed.type === 'tool-call') {
-                // Handle tool invocation
-                setDisplayMessages((prev) =>
-                  prev.map((msg) => {
-                    if (msg.id === assistantMessageId) {
-                      return {
-                        ...msg,
-                        toolInvocations: [
-                          ...(msg.toolInvocations || []),
-                          {
-                            toolName: parsed.toolName,
-                            args: parsed.args,
-                          },
-                        ],
-                      };
-                    }
-                    return msg;
-                  })
-                );
-              }
-            } catch {
-              // Ignore parse errors
-            }
-          }
-        }
-      }
-    } catch (error) {
-      console.error('Chat error:', error);
-      setDisplayMessages((prev) => [
-        ...prev,
-        {
-          id: Date.now().toString(),
-          role: 'assistant',
-          content: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        },
-      ]);
-    }
+  const handleStop = () => {
+    void stop();
   };
 
   return (
-    <div className="flex flex-col h-screen bg-gradient-to-br from-slate-50 to-slate-100">
-      {/* Header */}
-      <header className="border-b border-slate-200 bg-white shadow-sm">
-        <div className="max-w-4xl mx-auto px-6 py-4">
-          <h1 className="text-2xl font-bold text-slate-900">SkillsFlow AI</h1>
-          <p className="text-sm text-slate-600">Chat with AI-powered skills</p>
-        </div>
-      </header>
-
-      {/* Messages Container */}
+    <div
+      className={cn(
+        'flex min-h-[500px] flex-1 flex-col overflow-hidden rounded-xl border border-slate-800 bg-gradient-to-br from-slate-900 to-slate-800 shadow-lg',
+        className,
+      )}
+    >
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-4xl mx-auto px-6 py-8 space-y-4">
-          {displayMessages.length === 0 ? (
-            // Welcome state
+          {messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-96 text-center">
               <div className="text-5xl mb-4">🚀</div>
-              <h2 className="text-3xl font-bold text-slate-900 mb-2">Welcome to SkillsFlow AI</h2>
-              <p className="text-lg text-slate-600 max-w-md">
-                Chat with me about any topic. I'll use specialized skills to help you accomplish your goals.
+              <h2 className="text-3xl font-bold text-white mb-2">Welcome to SideKick</h2>
+              <p className="text-lg text-slate-300 max-w-md">
+                Chat with me about any topic. I&apos;ll use specialized skills to help you.
               </p>
             </div>
           ) : (
             <>
-              {displayMessages.map((message) => (
-                <div
-                  key={message.id}
-                  className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                >
+              {messages.map((message) => {
+                const textContent = extractMessageText(message.parts);
+                return (
                   <div
-                    className={`max-w-md px-4 py-3 rounded-lg ${
-                      message.role === 'user'
-                        ? 'bg-blue-500 text-white rounded-br-none'
-                        : 'bg-slate-200 text-slate-900 rounded-bl-none'
-                    }`}
+                    key={message.id}
+                    className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
                   >
-                    <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-
-                    {/* Show tool invocations if present */}
-                    {message.toolInvocations && message.toolInvocations.length > 0 && (
-                      <div className="mt-2 pt-2 border-t border-slate-300 space-y-1">
-                        {message.toolInvocations.map((tool: any, toolIndex: number) => (
-                          <div key={toolIndex} className="text-xs opacity-75">
-                            🔧 {tool.toolName}
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                    <div
+                      className={`max-w-2xl px-4 py-3 rounded-lg ${
+                        message.role === 'user'
+                          ? 'bg-blue-600 text-white rounded-br-none'
+                          : 'bg-slate-800 text-white rounded-bl-none'
+                      }`}
+                    >
+                      <p className="text-sm leading-relaxed break-words whitespace-pre-wrap">
+                        {textContent}
+                      </p>
+                      {message.toolInvocations && message.toolInvocations.length > 0 && (
+                        <div className="mt-2 pt-2 border-t border-slate-600 space-y-1">
+                          {message.toolInvocations.map((tool: ToolInvocation) => (
+                            <div key={tool.id} className="text-xs opacity-75">
+                              🔧 {tool.toolName} {tool.state === 'output-available' ? '✓' : ''}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+              {isLoading && (
+                <div className="flex justify-start">
+                  <div className="bg-slate-800 px-4 py-3 rounded-lg rounded-bl-none">
+                    <div className="flex space-x-2">
+                      <div className="w-2 h-2 bg-slate-400 rounded-full animate-pulse"></div>
+                      <div
+                        className="w-2 h-2 bg-slate-400 rounded-full animate-pulse"
+                        style={{ animationDelay: '0.1s' }}
+                      ></div>
+                      <div
+                        className="w-2 h-2 bg-slate-400 rounded-full animate-pulse"
+                        style={{ animationDelay: '0.2s' }}
+                      ></div>
+                    </div>
                   </div>
                 </div>
-              ))}
-
+              )}
               <div ref={messagesEndRef} />
             </>
           )}
         </div>
       </main>
 
-      {/* Input Area */}
-      <footer className="border-t border-slate-200 bg-white shadow-md">
+  <footer className="border-t border-slate-700 bg-slate-900/80 backdrop-blur">
         <div className="max-w-4xl mx-auto px-6 py-6">
           <form onSubmit={handleSubmit} className="flex gap-2">
             <input
               type="text"
               value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
+              onChange={handleInputChange}
               placeholder="Ask me anything..."
-              className="flex-1 px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="flex-1 px-4 py-2 border border-slate-600 bg-slate-800 text-white rounded-lg placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={isLoading}
             />
             <button
               type="submit"
-              disabled={!inputValue.trim()}
-              className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50"
+              disabled={!inputValue.trim() || isLoading}
+              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
             >
               Send
             </button>
+            {isLoading && (
+              <button
+                type="button"
+                onClick={handleStop}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+              >
+                Stop
+              </button>
+            )}
           </form>
         </div>
       </footer>

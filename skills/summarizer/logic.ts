@@ -1,99 +1,254 @@
 /**
  * Summarizer Skill Logic
- * Summarizes text content into concise summaries
+ * Summarizes content into concise, well-structured summaries
  */
 
-export default async function summarizer(input: {
+type SummaryStyle = 'bullet-points' | 'paragraphs' | 'executive-summary';
+
+interface SummarizerInput {
   content: string;
-  style?: 'bullet-points' | 'paragraphs' | 'executive-summary';
+  style?: SummaryStyle;
   max_length?: number;
-}) {
+}
+
+interface SummarizerOutput {
+  status: 'completed';
+  style: SummaryStyle;
+  original_word_count: number;
+  original_sentence_count: number;
+  summary_word_count: number;
+  summary_sentence_count: number;
+  reduction_percentage: number;
+  compression_ratio: number;
+  content: string;
+  execution_time_ms: number;
+  timestamp: string;
+}
+
+/**
+ * Summarize content in the specified style
+ */
+export default async function summarizer(
+  input: SummarizerInput,
+): Promise<SummarizerOutput> {
+  const startTime = performance.now();
   const {
     content,
     style = 'bullet-points',
-    max_length = 500,
+    max_length = 150,
   } = input;
 
-  // Simulate text analysis
-  const words = content.split(/\s+/).length;
-  const reduction = Math.round(((words - max_length) / words) * 100);
+  // Validate input
+  if (!content || typeof content !== 'string' || content.trim().length === 0) {
+    throw new Error('Content must be a non-empty string');
+  }
 
-  const summary = generateSummary(content, style, max_length);
+  if (!['bullet-points', 'paragraphs', 'executive-summary'].includes(style)) {
+    throw new Error(
+      'Style must be one of: bullet-points, paragraphs, executive-summary',
+    );
+  }
+
+  // Simulate processing
+  await new Promise((resolve) => setTimeout(resolve, 150));
+
+  // Extract key information
+  const words = content.split(/\s+/).length;
+  const sentences = content
+    .split(/[.!?]+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+
+  // Generate summary based on style
+  const maxWords = normalizeMaxWords(max_length);
+  const rawSummary = generateSummary(content, sentences, style, maxWords);
+  const summary = enforceWordLimit(rawSummary, maxWords);
+  const summaryWords = summary.length > 0 ? summary.split(/\s+/).length : 0;
+  const reduction = Math.round(((words - summaryWords) / words) * 100);
+
+  const executionTime = Math.round((performance.now() - startTime) * 100) / 100;
 
   return {
-    original_length_words: words,
-    summary_length_words: summary.split(/\s+/).length,
-    reduction_percentage: reduction,
+    status: 'completed',
     style,
+    original_word_count: words,
+    original_sentence_count: sentences.length,
+    summary_word_count: summaryWords,
+    summary_sentence_count: summary.split(/[.!?]+/).filter((s) => s.trim()).length,
+    reduction_percentage: Math.max(0, reduction),
+    compression_ratio: Math.round((summaryWords / words) * 100) / 100,
     content: summary,
-    execution_time_ms: Math.random() * 500 + 100,
+    execution_time_ms: executionTime,
+    timestamp: new Date().toISOString(),
   };
 }
 
+/**
+ * Generate summary in specified style
+ */
 function generateSummary(
   content: string,
-  style: string,
-  maxLength: number
+  sentences: string[],
+  style: SummaryStyle,
+  maxWords: number,
 ): string {
-  // Extract first ~3 sentences as key points
-  const sentences = content.split(/[.!?]+/).filter((s) => s.trim());
-  const keyPoints = sentences.slice(0, 3);
+  const keyPoints = extractKeyPoints(sentences, Math.max(1, Math.ceil(maxWords / 20)));
 
   switch (style) {
     case 'bullet-points':
-      return generateBulletPoints(keyPoints, maxLength);
+      return generateBulletPoints(keyPoints);
     case 'paragraphs':
-      return generateParagraphs(keyPoints, maxLength);
+      return generateParagraphs(keyPoints);
     case 'executive-summary':
-      return generateExecutiveSummary(keyPoints, maxLength);
+      return generateExecutiveSummary(content, keyPoints);
     default:
-      return generateBulletPoints(keyPoints, maxLength);
+      return generateBulletPoints(keyPoints);
   }
 }
 
-function generateBulletPoints(
-  keyPoints: string[],
-  _maxLength: number
-): string {
-  return `
-## Summary - Bullet Points
+function normalizeMaxWords(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return 150;
+  }
 
-${keyPoints.map((point) => `- ${point.trim()}`).join('\n')}
-
-**Original**: ${keyPoints.length} key points extracted and summarized.
-  `.trim();
+  const normalized = Math.floor(value);
+  return Math.min(Math.max(normalized, 50), 1000);
 }
 
-function generateParagraphs(
-  keyPoints: string[],
-  _maxLength: number
-): string {
-  return `
-## Summary - Narrative
+function enforceWordLimit(summary: string, maxWords: number): string {
+  const words = summary
+    .split(/\s+/)
+    .filter((word) => word.length > 0);
 
-${keyPoints.map((point) => `${point.trim()}.`).join(' ')}
+  if (words.length <= maxWords) {
+    return summary;
+  }
 
-This summary captures the essential information from the original content in narrative form.
-  `.trim();
+  const truncated = words.slice(0, maxWords).join(' ');
+  return truncated.endsWith('.') ? truncated : `${truncated}…`;
 }
 
+/**
+ * Extract key points from sentences
+ */
+function extractKeyPoints(sentences: string[], count: number): string[] {
+  // Find sentences with highest keyword density
+  const scoredSentences = sentences.map((sentence, idx) => ({
+    sentence,
+    index: idx,
+    score: calculateSentenceScore(sentence),
+  }));
+
+  return scoredSentences
+    .sort((a, b) => b.score - a.score)
+    .slice(0, Math.min(count, sentences.length))
+    .sort((a, b) => a.index - b.index)
+    .map((item) => item.sentence);
+}
+
+/**
+ * Calculate sentence importance score
+ */
+function calculateSentenceScore(sentence: string): number {
+  const words = sentence.split(/\s+/);
+  const length = words.length;
+
+  // Longer sentences tend to be more informative
+  const lengthScore = Math.min(length / 30, 1);
+
+  // Check for important keywords
+  const keywords = [
+    'important',
+    'significant',
+    'key',
+    'critical',
+    'must',
+    'should',
+    'result',
+    'finding',
+    'conclusion',
+    'recommend',
+    'action',
+  ];
+  const keywordCount = keywords.filter((kw) =>
+    sentence.toLowerCase().includes(kw),
+  ).length;
+  const keywordScore = Math.min(keywordCount / 3, 1);
+
+  return lengthScore * 0.6 + keywordScore * 0.4;
+}
+
+/**
+ * Generate bullet-point summary
+ */
+function generateBulletPoints(keyPoints: string[]): string {
+  let result = `## Summary - Key Points\n\n`;
+
+  keyPoints.forEach((point, idx) => {
+    result += `${idx + 1}. ${point.trim()}\n`;
+  });
+
+  result += `\n**Summary Statistics:**\n`;
+  result += `- Key points extracted: ${keyPoints.length}\n`;
+  result += `- Format: Bullet-point list\n`;
+  result += `- Clarity: High\n`;
+
+  return result;
+}
+
+/**
+ * Generate paragraph summary
+ */
+function generateParagraphs(keyPoints: string[]): string {
+  let result = `## Summary - Narrative Format\n\n`;
+
+  // Group into logical paragraphs
+  const groupSize = Math.ceil(keyPoints.length / 2);
+  for (let i = 0; i < keyPoints.length; i += groupSize) {
+    const group = keyPoints.slice(i, i + groupSize);
+    result += group.map((p) => p.trim() + '.').join(' ');
+    result += '\n\n';
+  }
+
+  result += `**Summary Context:**\n`;
+  result += `- Total points covered: ${keyPoints.length}\n`;
+  result += `- Format: Narrative paragraphs\n`;
+  result += `- Style: Flowing and connected\n`;
+
+  return result;
+}
+
+/**
+ * Generate executive summary
+ */
 function generateExecutiveSummary(
+  content: string,
   keyPoints: string[],
-  _maxLength: number
 ): string {
-  return `
-## Executive Summary
+  let result = `## Executive Summary\n\n`;
 
-### Overview
-${keyPoints[0] ? keyPoints[0].trim() : 'Key information summary'}.
+  result += `### Overview\n`;
+  result += `${keyPoints[0] ? keyPoints[0].trim() + '.' : 'Key information summary.'}\n\n`;
 
-### Key Points
-${keyPoints.slice(1).map((point) => `- ${point.trim()}`).join('\n')}
+  if (keyPoints.length > 1) {
+    result += `### Key Points\n`;
+    keyPoints.slice(1).forEach((point) => {
+      result += `- ${point.trim()}\n`;
+    });
+    result += '\n';
+  }
 
-### Conclusion
-The material presents important findings and considerations for stakeholders.
+  result += `### Takeaways\n`;
+  const uniqueWords = new Set(content.toLowerCase().split(/\s+/));
+  result += `- Document addresses ${uniqueWords.size} unique concepts\n`;
+  result += `- ${keyPoints.length} critical points identified\n`;
+  result += `- Clear action items and recommendations included\n\n`;
 
----
-*Executive summary generated automatically*
-  `.trim();
+  result += `### Recommendations\n`;
+  result += `1. Review all key points for relevance to your needs\n`;
+  result += `2. Identify actionable items for implementation\n`;
+  result += `3. Track progress on recommended actions\n`;
+  result += `4. Follow up for additional details as needed\n`;
+
+  return result;
 }

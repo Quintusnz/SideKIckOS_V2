@@ -4,23 +4,11 @@
  * Used by frontend to populate skill selector and display available tools to user
  */
 
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
 import yaml from 'yaml';
-
-interface SkillMetadata {
-  name: string;
-  version: string;
-  description: string;
-  category: string;
-  tools: string[];
-  input_schema: Record<string, any>;
-  output_format: string;
-  estimated_tokens?: number;
-  author?: string;
-  tags?: string[];
-}
+import type { JsonValue, SkillMetadata } from '@/types';
 
 interface SkillInfo {
   id: string;
@@ -37,14 +25,19 @@ async function parseSkillMetadata(skillPath: string): Promise<SkillMetadata | nu
     const content = await fs.readFile(skillMdPath, 'utf-8');
 
     // Extract YAML frontmatter (text between --- markers)
-    const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+  const frontmatterMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
     if (!frontmatterMatch) {
       console.warn(`No YAML frontmatter found in ${skillMdPath}`);
       return null;
     }
 
     // Parse YAML
-    const metadata = yaml.parse(frontmatterMatch[1]) as SkillMetadata;
+    const metadata = normalizeSkillMetadata(yaml.parse(frontmatterMatch[1]));
+
+    if (!metadata) {
+      console.warn(`Invalid metadata schema in ${skillMdPath}`);
+    }
+
     return metadata;
   } catch (error) {
     console.error(`Error parsing skill metadata from ${skillPath}:`, error);
@@ -57,7 +50,6 @@ async function parseSkillMetadata(skillPath: string): Promise<SkillMetadata | nu
  */
 async function hasSkillLogic(skillPath: string): Promise<boolean> {
   try {
-    const logicPath = path.join(skillPath, 'logic.ts');
     const files = await fs.readdir(skillPath);
     return files.some((f) => f === 'logic.ts' || f === 'logic.js');
   } catch {
@@ -111,7 +103,7 @@ async function discoverSkills(): Promise<SkillInfo[]> {
   }
 }
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
     const skills = await discoverSkills();
 
@@ -149,4 +141,87 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+type UnknownRecord = Record<string, unknown>;
+
+function normalizeSkillMetadata(raw: unknown): SkillMetadata | null {
+  if (!isRecord(raw)) {
+    return null;
+  }
+
+  const name = typeof raw.name === 'string' ? raw.name : undefined;
+  const version = typeof raw.version === 'string' ? raw.version : undefined;
+  const description = typeof raw.description === 'string' ? raw.description : undefined;
+  const category = typeof raw.category === 'string' ? raw.category : undefined;
+  const tools = Array.isArray(raw.tools) ? raw.tools.filter((tool): tool is string => typeof tool === 'string') : [];
+  const outputFormat = typeof raw.output_format === 'string' ? raw.output_format : undefined;
+
+  if (!name || !version || !description || !category || tools.length === 0 || !outputFormat) {
+    return null;
+  }
+
+  const inputSchema = toJsonRecord(raw.input_schema);
+
+  const estimatedTokens = typeof raw.estimated_tokens === 'number' && Number.isFinite(raw.estimated_tokens)
+    ? raw.estimated_tokens
+    : undefined;
+  const author = typeof raw.author === 'string' ? raw.author : undefined;
+  const tags = Array.isArray(raw.tags)
+    ? raw.tags.filter((tag): tag is string => typeof tag === 'string')
+    : undefined;
+
+  return {
+    name,
+    version,
+    description,
+    category,
+    tools,
+    input_schema: inputSchema,
+    output_format: outputFormat,
+    estimated_tokens: estimatedTokens,
+    author,
+    tags,
+  };
+}
+
+function toJsonValue(value: unknown): JsonValue {
+  if (
+    value === null ||
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean'
+  ) {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => toJsonValue(item));
+  }
+
+  if (isRecord(value)) {
+    const record: Record<string, JsonValue> = {};
+    Object.entries(value).forEach(([key, entry]) => {
+      record[key] = toJsonValue(entry);
+    });
+    return record;
+  }
+
+  return String(value);
+}
+
+function toJsonRecord(value: unknown): Record<string, JsonValue> {
+  if (!isRecord(value)) {
+    return {};
+  }
+
+  const record: Record<string, JsonValue> = {};
+  Object.entries(value).forEach(([key, entry]) => {
+    record[key] = toJsonValue(entry);
+  });
+  return record;
+}
+
+function isRecord(value: unknown): value is UnknownRecord {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

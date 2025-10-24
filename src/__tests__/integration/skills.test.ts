@@ -3,72 +3,186 @@
  * Tests skill loading, invocation, and correctness
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
+import type { JsonValue, SkillMetadata } from '@/types';
 
-// Mock skill implementations for testing
-const mockSkills = {
-  web_research: {
-    metadata: {
-      name: 'Web Research',
-      version: '1.0.0',
-      description: 'Performs web-based research',
-      category: 'research',
-      tools: ['web_search'],
-      input_schema: {
-        query: { type: 'string' },
-        depth: { type: 'string', enum: ['shallow', 'deep'] },
-      },
-      output_format: 'markdown',
+type ResearchDepth = 'shallow' | 'deep';
+type SummarizerStyle = 'bullet-points' | 'paragraphs';
+type ReportStyle = 'technical' | 'business' | 'academic';
+
+interface WebResearchInput {
+  query: string;
+  depth?: ResearchDepth;
+}
+
+interface WebResearchFinding {
+  source: string;
+  title: string;
+  relevance: number;
+}
+
+interface WebResearchResult {
+  query: string;
+  depth: ResearchDepth;
+  status: 'completed';
+  findings: WebResearchFinding[];
+}
+
+interface SummarizerInput {
+  content: string;
+  style?: string;
+}
+
+interface SummarizerResult {
+  content: string;
+  style: SummarizerStyle;
+  reduction: '70%';
+}
+
+interface ReportWriterInput {
+  title: string;
+  content: string;
+  style?: string;
+}
+
+interface ReportWriterResult {
+  title: string;
+  style: ReportStyle;
+  report: string;
+}
+
+interface MockSkill<Input, Output> {
+  metadata: SkillMetadata;
+  logic: (input: Input) => Promise<Output>;
+}
+
+const RESEARCH_DEPTH_VALUES: ReadonlyArray<ResearchDepth> = ['shallow', 'deep'];
+const SUMMARIZER_STYLE_VALUES: ReadonlyArray<SummarizerStyle> = ['bullet-points', 'paragraphs'];
+const REPORT_STYLE_VALUES: ReadonlyArray<ReportStyle> = ['technical', 'business', 'academic'];
+
+const webResearchSkill: MockSkill<WebResearchInput, WebResearchResult> = {
+  metadata: {
+    name: 'Web Research',
+    version: '1.0.0',
+    description: 'Performs web-based research',
+    category: 'research',
+    tools: ['web_search'],
+    input_schema: {
+      query: { type: 'string' },
+      depth: { type: 'string', enum: [...RESEARCH_DEPTH_VALUES] },
     },
-    logic: async (input: any) => ({
+    output_format: 'markdown',
+  },
+  logic: async (input) => {
+    const depth = isResearchDepth(input.depth) ? input.depth : 'shallow';
+
+    return {
       query: input.query,
-      depth: input.depth || 'shallow',
+      depth,
       status: 'completed',
       findings: [
-        { source: 'DB', title: `Research on ${input.query}`, relevance: 0.95 },
+        {
+          source: 'DB',
+          title: `Research on ${input.query}`,
+          relevance: 0.95,
+        },
       ],
-    }),
-  },
-  summarizer: {
-    metadata: {
-      name: 'Summarizer',
-      version: '1.0.0',
-      description: 'Summarizes text content',
-      category: 'analysis',
-      tools: ['text_analysis'],
-      input_schema: {
-        content: { type: 'string' },
-        style: { type: 'string', enum: ['bullet-points', 'paragraphs'] },
-      },
-      output_format: 'markdown',
-    },
-    logic: async (input: any) => ({
-      content: `Summary of: ${input.content.substring(0, 50)}...`,
-      style: input.style || 'bullet-points',
-      reduction: '70%',
-    }),
-  },
-  report_writer: {
-    metadata: {
-      name: 'Report Writer',
-      version: '1.0.0',
-      description: 'Generates professional reports',
-      category: 'writing',
-      tools: ['document_generation'],
-      input_schema: {
-        title: { type: 'string' },
-        content: { type: 'string' },
-        style: { type: 'string', enum: ['technical', 'business', 'academic'] },
-      },
-      output_format: 'markdown',
-    },
-    logic: async (input: any) => ({
-      title: input.title,
-      style: input.style || 'business',
-      report: `# ${input.title}\n\n${input.content}`,
-    }),
+    } satisfies WebResearchResult;
   },
 };
+
+const summarizerSkill: MockSkill<SummarizerInput, SummarizerResult> = {
+  metadata: {
+    name: 'Summarizer',
+    version: '1.0.0',
+    description: 'Summarizes text content',
+    category: 'analysis',
+    tools: ['text_analysis'],
+    input_schema: {
+      content: { type: 'string' },
+      style: { type: 'string', enum: [...SUMMARIZER_STYLE_VALUES] },
+    },
+    output_format: 'markdown',
+  },
+  logic: async (input) => {
+    const style = isSummarizerStyle(input.style) ? input.style : 'bullet-points';
+    const contentPreview = input.content.slice(0, 50);
+
+    return {
+      content: `Summary of: ${contentPreview}${contentPreview.length === 50 ? '...' : ''}`,
+      style,
+      reduction: '70%',
+    } satisfies SummarizerResult;
+  },
+};
+
+const reportWriterSkill: MockSkill<ReportWriterInput, ReportWriterResult> = {
+  metadata: {
+    name: 'Report Writer',
+    version: '1.0.0',
+    description: 'Generates professional reports',
+    category: 'writing',
+    tools: ['document_generation'],
+    input_schema: {
+      title: { type: 'string' },
+      content: { type: 'string' },
+      style: { type: 'string', enum: [...REPORT_STYLE_VALUES] },
+    },
+    output_format: 'markdown',
+  },
+  logic: async (input) => {
+    const style = isReportStyle(input.style) ? input.style : 'business';
+
+    return {
+      title: input.title,
+      style,
+      report: `# ${input.title}\n\n${input.content}`,
+    } satisfies ReportWriterResult;
+  },
+};
+
+const mockSkills = {
+  web_research: webResearchSkill,
+  summarizer: summarizerSkill,
+  report_writer: reportWriterSkill,
+} as const;
+
+type CombinedMockSkill = (typeof mockSkills)[keyof typeof mockSkills];
+
+function isResearchDepth(value: unknown): value is ResearchDepth {
+  return typeof value === 'string' && RESEARCH_DEPTH_VALUES.includes(value as ResearchDepth);
+}
+
+function isSummarizerStyle(value: unknown): value is SummarizerStyle {
+  return typeof value === 'string' && SUMMARIZER_STYLE_VALUES.includes(value as SummarizerStyle);
+}
+
+function isReportStyle(value: unknown): value is ReportStyle {
+  return typeof value === 'string' && REPORT_STYLE_VALUES.includes(value as ReportStyle);
+}
+
+function isJsonRecord(value: JsonValue | undefined): value is Record<string, JsonValue> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function getEnumValues(value: JsonValue | undefined): string[] {
+  if (!isJsonRecord(value)) {
+    return [];
+  }
+
+  const enumCandidate = value.enum;
+  if (Array.isArray(enumCandidate)) {
+    return enumCandidate.filter((item): item is string => typeof item === 'string');
+  }
+
+  return [];
+}
+
+function forEachMockSkill(callback: (skill: CombinedMockSkill) => void): void {
+  (Object.values(mockSkills) as CombinedMockSkill[]).forEach((skill) => {
+    callback(skill);
+  });
+}
 
 describe('Skills Integration Tests', () => {
   describe('Web Research Skill', () => {
@@ -108,8 +222,8 @@ describe('Skills Integration Tests', () => {
       const schema = mockSkills.web_research.metadata.input_schema;
 
       expect(schema.query).toBeDefined();
-      expect(schema.depth.enum).toContain('shallow');
-      expect(schema.depth.enum).toContain('deep');
+      const depthEnum = getEnumValues(schema.depth);
+      expect(depthEnum).toEqual(expect.arrayContaining(['shallow', 'deep']));
     });
   });
 
@@ -305,7 +419,7 @@ describe('Skills Integration Tests', () => {
 
   describe('Metadata Validation', () => {
     it('should have valid metadata for all skills', () => {
-      Object.values(mockSkills).forEach((skill) => {
+      forEachMockSkill((skill) => {
         expect(skill.metadata.name).toBeDefined();
         expect(skill.metadata.version).toBeDefined();
         expect(skill.metadata.description).toBeDefined();
@@ -315,14 +429,14 @@ describe('Skills Integration Tests', () => {
     });
 
     it('should have proper input schemas', () => {
-      Object.values(mockSkills).forEach((skill) => {
+      forEachMockSkill((skill) => {
         expect(skill.metadata.input_schema).toBeDefined();
         expect(typeof skill.metadata.input_schema).toBe('object');
       });
     });
 
     it('should have executable logic', () => {
-      Object.values(mockSkills).forEach((skill) => {
+      forEachMockSkill((skill) => {
         expect(skill.logic).toBeDefined();
         expect(typeof skill.logic).toBe('function');
       });

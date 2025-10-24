@@ -1,7 +1,13 @@
 /**
- * SkillsFlow AI - Core Type Definitions
+ * SideKick - Core Type Definitions
  * Central place for all TypeScript interfaces and types
  */
+
+/**
+ * Lightweight JSON-compatible value types used for skill IO definitions.
+ */
+export type JsonPrimitive = string | number | boolean | null;
+export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 
 /**
  * Skill Metadata - Extracted from SKILL.md frontmatter
@@ -12,7 +18,7 @@ export interface SkillMetadata {
   description: string;
   category: string;
   tools: string[];
-  input_schema: Record<string, any>;
+  input_schema: Record<string, JsonValue>;
   output_format: string;
   estimated_tokens?: number;
   author?: string;
@@ -22,10 +28,32 @@ export interface SkillMetadata {
 /**
  * Skill - Complete skill with metadata and optional logic
  */
+export type SkillInvocationInput = Record<string, JsonValue>;
+
+export type SkillInvocationResult =
+  | JsonValue
+  | {
+      type: 'markdown_skill';
+      metadata: SkillMetadata;
+      markdown: string;
+      input: SkillInvocationInput;
+    }
+  | {
+      type: 'metadata_only';
+      status: 'completed' | 'pending';
+      skill: string;
+      metadata: SkillMetadata;
+      note: string;
+      input?: SkillInvocationInput;
+    };
+
 export interface Skill {
   metadata: SkillMetadata;
   markdown: string;
-  logic?: (input: any) => Promise<any>;
+  logic?: (
+    input: SkillInvocationInput,
+    executionContext?: Record<string, unknown>,
+  ) => Promise<JsonValue>;
 }
 
 /**
@@ -35,7 +63,7 @@ export interface WorkflowStep {
   id: string;
   name?: string;
   skill: string;
-  input: Record<string, any>;
+  input: Record<string, JsonValue>;
   timeout?: number;
   retries?: number;
   fallback?: string;
@@ -60,9 +88,9 @@ export interface Workflow {
 export interface ToolInvocation {
   id: string;
   toolName: string;
-  args: Record<string, any>;
+  args: Record<string, JsonValue>;
   state: 'input-available' | 'output-available';
-  result?: any;
+  result?: JsonValue;
 }
 
 /**
@@ -75,7 +103,7 @@ export interface Message {
   toolInvocations?: ToolInvocation[];
   toolResults?: Array<{
     toolCallId: string;
-    result: any;
+    result: JsonValue;
   }>;
   createdAt?: Date;
 }
@@ -99,8 +127,8 @@ export interface WorkflowExecution {
 export interface WorkflowStepExecution {
   stepId: string;
   status: 'pending' | 'running' | 'completed' | 'failed';
-  input?: Record<string, any>;
-  output?: any;
+  input?: Record<string, JsonValue>;
+  output?: JsonValue;
   error?: string;
   attempts?: number;
   startedAt?: Date;
@@ -110,7 +138,7 @@ export interface WorkflowStepExecution {
 /**
  * API Response - Standard API response format
  */
-export interface ApiResponse<T = any> {
+export interface ApiResponse<T = unknown> {
   success: boolean;
   data?: T;
   error?: string;

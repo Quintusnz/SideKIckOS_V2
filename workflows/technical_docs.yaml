@@ -1,0 +1,32 @@
+name: Technical Documentation Generator
+description: Generate comprehensive technical documentation from research
+version: 1.0.0
+
+steps:
+  - id: technical_research
+    skill: web_research
+    input:
+      query: "{{ technology }} technical implementation"
+      depth: deep
+      max_sources: 5
+    timeout: 30000
+
+  - id: tech_summary
+    skill: summarizer
+    depends_on: [technical_research]
+    input:
+      content: "{{ steps.technical_research.findings }}"
+      style: bullet-points
+      max_words: 300
+    timeout: 20000
+
+  - id: tech_documentation
+    skill: report_writer
+    depends_on: [tech_summary]
+    input:
+      title: "Technical Documentation: {{ technology }}"
+      content: "{{ steps.tech_summary.content }}"
+      style: technical
+      include_toc: true
+      include_appendix: true
+    timeout: 25000

@@ -8,19 +8,9 @@
  * 4. Error handling for invalid requests
  */
 
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import fs from 'fs/promises';
 import path from 'path';
-
-interface SkillMetadata {
-  name: string;
-  version: string;
-  description: string;
-  category: string;
-  tools: string[];
-  input_schema: Record<string, any>;
-  output_format: string;
-}
 
 describe('API Routes - Skills & Agent', () => {
   let skillsDir: string;

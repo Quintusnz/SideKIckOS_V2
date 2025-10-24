@@ -5,8 +5,38 @@
 
 import fs from 'fs/promises';
 import path from 'path';
+import { pathToFileURL } from 'url';
 import yaml from 'yaml';
-import type { SkillMetadata, Skill } from '@/types';
+import type {
+  SkillMetadata,
+  Skill,
+  SkillInvocationInput,
+  SkillInvocationResult,
+} from '@/types';
+
+let tsNodeRegistrationPromise: Promise<void> | null = null;
+let tsNodeAvailable = true;
+
+async function ensureTsNodeRegistered(): Promise<void> {
+  if (tsNodeRegistrationPromise) {
+    await tsNodeRegistrationPromise;
+    return;
+  }
+
+  tsNodeRegistrationPromise = (async () => {
+    try {
+      await import('ts-node/register');
+    } catch (error) {
+      tsNodeAvailable = false;
+      console.warn(
+        '[SkillRegistry] TypeScript skill logic detected but ts-node could not be registered. Only JavaScript logic files will run.',
+        error instanceof Error ? error.message : error,
+      );
+    }
+  })();
+
+  await tsNodeRegistrationPromise;
+}
 
 /**
  * SkillRegistry - Manages all available skills
@@ -17,21 +47,39 @@ import type { SkillMetadata, Skill } from '@/types';
 export class SkillRegistry {
   private skills: Map<string, Skill> = new Map();
   private skillsDir: string;
+  private resolvedSkillsDir: string | null = null;
 
   constructor(skillsDir: string = './skills') {
     this.skillsDir = skillsDir;
   }
 
+  private resolveSkillsDir(): string {
+    if (this.resolvedSkillsDir) {
+      return this.resolvedSkillsDir;
+    }
+
+    const absolutePath = path.isAbsolute(this.skillsDir)
+      ? this.skillsDir
+      : path.resolve(process.cwd(), this.skillsDir);
+
+    this.resolvedSkillsDir = absolutePath;
+    return absolutePath;
+  }
+
   /**
    * Initialize registry by scanning skills directory
-   * Loads metadata from SKILL.md files but NOT the logic.js files yet
+  * Loads metadata from SKILL.md files but NOT the logic.ts/logic.js files yet
    */
   async initialize(): Promise<void> {
     try {
-      const skillFolders = await fs.readdir(this.skillsDir);
+      const skillsDir = this.resolveSkillsDir();
+      const skillFolders = await fs.readdir(skillsDir);
+
+      // Reset cached entries before loading to avoid stale metadata.
+      this.skills.clear();
 
       for (const folder of skillFolders) {
-        const skillPath = path.join(this.skillsDir, folder);
+        const skillPath = path.join(skillsDir, folder);
         const stats = await fs.stat(skillPath);
 
         if (stats.isDirectory()) {
@@ -60,7 +108,7 @@ export class SkillRegistry {
       const content = await fs.readFile(skillMdPath, 'utf-8');
 
       // Extract YAML frontmatter
-      const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+  const frontmatterMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
       if (!frontmatterMatch) {
         console.warn(
           `[SkillRegistry] No YAML frontmatter in ${skillName}/SKILL.md`
@@ -97,33 +145,40 @@ export class SkillRegistry {
     if (!skill || skill.logic) return; // Already loaded
 
     try {
-      const skillPath = path.join(this.skillsDir, skillName);
-      const logicPath = path.join(skillPath, 'logic.ts');
-      const logicJsPath = path.join(skillPath, 'logic.js');
+      const skillsDir = this.resolveSkillsDir();
+      const skillPath = path.join(skillsDir, skillName);
+      const candidateFiles = [
+        path.join(skillPath, 'logic.ts'),
+        path.join(skillPath, 'logic.js'),
+      ];
 
-      // Try TypeScript first, then JavaScript
-      let logicExists = false;
-      let logicFile = logicPath;
-
-      try {
-        await fs.stat(logicPath);
-        logicExists = true;
-      } catch {
+      for (const candidate of candidateFiles) {
         try {
-          await fs.stat(logicJsPath);
-          logicExists = true;
-          logicFile = logicJsPath;
+          await fs.access(candidate);
         } catch {
-          // Logic file not found - that's OK, it's optional
+          continue;
         }
-      }
 
-      if (logicExists) {
-        // Dynamically import the logic
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const module = require(logicFile);
-        skill.logic = module.default || module;
-        console.log(`[SkillRegistry] Lazy-loaded logic for skill: ${skillName}`);
+        if (candidate.endsWith('.ts')) {
+          if (tsNodeAvailable) {
+            await ensureTsNodeRegistered();
+          }
+
+          if (!tsNodeAvailable) {
+            continue;
+          }
+        }
+
+        const moduleUrl = pathToFileURL(candidate).href;
+        const importedModule = await import(moduleUrl);
+        const logicHandler = importedModule.default || importedModule;
+
+        if (typeof logicHandler === 'function') {
+          skill.logic = logicHandler;
+          console.log(`[SkillRegistry] Lazy-loaded logic for skill: ${skillName}`);
+        }
+
+        break;
       }
     } catch (error) {
       console.warn(
@@ -151,7 +206,10 @@ export class SkillRegistry {
    * Invoke a skill with given input
    * This is where lazy-loading of logic happens
    */
-  async invokeSkill(skillName: string, input: any): Promise<any> {
+  async invokeSkill(
+    skillName: string,
+    input: SkillInvocationInput = {},
+  ): Promise<SkillInvocationResult> {
     const skill = this.getSkill(skillName);
     if (!skill) {
       throw new Error(`Skill not found: ${skillName}`);
@@ -163,7 +221,7 @@ export class SkillRegistry {
     // If skill has executable logic, invoke it
     if (skill.logic) {
       try {
-        return await skill.logic(input);
+  return await skill.logic(input);
       } catch (error) {
         throw new Error(
           `Skill execution failed: ${error instanceof Error ? error.message : String(error)}`
@@ -185,6 +243,16 @@ export class SkillRegistry {
    */
   listSkills(): string[] {
     return Array.from(this.skills.keys());
+  }
+
+  /**
+   * Get all skill entries with their metadata and logic.
+   */
+  getSkillEntries(): Array<{ name: string; skill: Skill }> {
+    return Array.from(this.skills.entries()).map(([name, skill]) => ({
+      name,
+      skill,
+    }));
   }
 
   /**

@@ -1,0 +1,35 @@
+name: Deep Research & Report Generation
+description: Conduct deep research and generate a comprehensive business report
+version: 1.0.0
+
+steps:
+  - id: research
+    skill: web_research
+    input:
+      query: "{{ user_query }}"
+      depth: deep
+      max_sources: 5
+    timeout: 30000
+    retry:
+      max_attempts: 2
+      backoff: exponential
+
+  - id: summarize_research
+    skill: summarizer
+    depends_on: [research]
+    input:
+      content: "{{ steps.research.findings }}"
+      style: executive-summary
+      max_words: 300
+    timeout: 20000
+
+  - id: generate_report
+    skill: report_writer
+    depends_on: [summarize_research]
+    input:
+      title: "Research Report: {{ user_query }}"
+      content: "{{ steps.summarize_research.content }}"
+      style: business
+      include_toc: true
+      include_appendix: true
+    timeout: 25000

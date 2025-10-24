@@ -94,7 +94,7 @@
 │  │  │  /skills/                                        │  │   │
 │  │  │  ├─ research/                                    │  │   │
 │  │  │  │  ├─ SKILL.md (metadata + instructions)       │  │   │
-│  │  │  │  └─ logic.js (optional implementation)       │  │   │
+│  │  │  │  └─ logic.ts (optional implementation, logic.js supported) │  │   │
 │  │  │  ├─ summarizer/                                 │  │   │
 │  │  │  │  └─ SKILL.md                                 │  │   │
 │  │  │  └─ report_writer/                              │  │   │
@@ -199,7 +199,7 @@ USER INPUT
 ┌─────────────────────────────────────────┐
 │ 5. Execute Selected Tool/Skill          │
 │    - Load SKILL.md (if not cached)      │
-│    - Lazy-load logic.js (if exists)     │
+│    - Lazy-load logic.ts (or logic.js)   │
 │    - Execute with params                │
 │    - Capture result + duration          │
 └──────────┬────────────────────────────────┘
@@ -324,7 +324,7 @@ App Root
                         │
                         ▼
          ┌──────────────────────────────┐
-         │ Check for logic.js           │  Does skill have code?
+         │ Check for logic.ts/logic.js  │  Does skill have code?
          └────────┬──────────────────┬──┘
                   │ YES              │ NO
                   │                  ▼
@@ -337,7 +337,7 @@ App Root
                   ▼                 │
          ┌──────────────────────┐   │
          │ Dynamic Import       │   │
-         │ logic.js             │   │
+         │ logic.ts / logic.js  │   │
          └────────┬─────────────┘   │
                   │                 │
                   ▼                 │

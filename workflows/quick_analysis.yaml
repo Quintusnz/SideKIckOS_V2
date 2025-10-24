@@ -1,0 +1,21 @@
+name: Quick Analysis Workflow
+description: Fast shallow research with bullet-point summary
+version: 1.0.0
+
+steps:
+  - id: quick_research
+    skill: web_research
+    input:
+      query: "{{ topic }}"
+      depth: shallow
+      max_sources: 3
+    timeout: 15000
+
+  - id: bullet_summary
+    skill: summarizer
+    depends_on: [quick_research]
+    input:
+      content: "{{ steps.quick_research.findings }}"
+      style: bullet-points
+      max_words: 100
+    timeout: 10000

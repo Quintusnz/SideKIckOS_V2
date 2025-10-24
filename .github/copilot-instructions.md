@@ -1,4 +1,4 @@
-# SkillsFlow AI - Copilot Instructions for AI Coding Agents
+# SideKick - Copilot Instructions for AI Coding Agents
 
 **Last Updated:** October 22, 2025  
 **Status:** Production-Grade MVP  
@@ -6,9 +6,9 @@
 
 ---
 
-## 🎯 The Big Picture: What SkillsFlow AI Does
+## 🎯 The Big Picture: What SideKick Does
 
-SkillsFlow AI is a **chat-based AI orchestrator** that demonstrates:
+SideKick is a **chat-based AI orchestrator** that demonstrates:
 
 1. **Dynamic Skill Discovery & Execution**: The AI can invoke predefined "skills" (capabilities) based on user requests
 2. **Real-time Streaming Chat**: Messages stream to users as they're generated (not batch responses)
@@ -25,22 +25,21 @@ Frontend Displays Streaming Message + Tool Invocations
 ```
 
 ---
-
 ## 🏗️ Architecture: Three Core Systems
 
 ### 1. **Skill Registry** (Skills Discovery & Lazy-Loading)
 - **Location:** `src/lib/skills.ts` (to be created)
-- **Purpose:** Scan `/skills` directory at startup, parse SKILL.md metadata, lazy-load logic.js on demand
+- **Purpose:** Scan `/skills` directory at startup, parse SKILL.md metadata, lazy-load logic.ts/logic.js on demand
 - **Key Pattern:** Each skill is a folder with:
   - `SKILL.md` (YAML frontmatter + markdown instructions)
-  - `logic.js` (optional, executable implementation)
+  - `logic.ts` (preferred, optional executable implementation) or `logic.js`
 - **Why This Design:** Skills are discoverable without loading code upfront (performance optimization)
 
 **Example Skill Structure:**
 ```
 /skills/web_research/
 ├── SKILL.md          ← Metadata + instructions for GPT-5
-├── logic.js          ← Optional implementation (lazy-loaded)
+├── logic.ts          ← Optional implementation (logic.js also supported, lazy-loaded)
 ```
 
 **SKILL.md Format (YAML frontmatter required):**
@@ -163,7 +162,7 @@ export default function ChatInterface() {
 - ❌ Custom error boundaries for chat
 
 ### Backend Requirement
-The `/api/agent` endpoint MUST return Server-Sent Events (SSE) using `stream.toTextStreamResponse()` from Vercel AI SDK.
+The `/api/agent` endpoint MUST return Server-Sent Events (SSE) using `stream.toUIMessageStreamResponse()` from the Vercel AI SDK to stay compatible with `@ai-sdk/react`.
 
 ---
 
@@ -211,7 +210,7 @@ src/
 skills/                    ← External: Skill definitions
 ├── web_research/
 │   ├── SKILL.md
-│   └── logic.js
+│   └── logic.ts   # Optional implementation (logic.js also supported)
 ├── summarizer/
 │   ├── SKILL.md
 │   └── logic.ts
@@ -305,15 +304,23 @@ async function parseSkillMetadata(skillPath: string): Promise<SkillMetadata> {
 
 ### Pattern 2: Lazy-Load Skill Logic
 ```typescript
-// Only load logic.js when invokeSkill() is called
+// Only load logic.ts/logic.js when invokeSkill() is called
 async function invokeSkill(skillName: string, input: any): Promise<any> {
   const skillPath = `./skills/${skillName}`;
   
-  // Check if logic.js exists
-  if (fs.existsSync(path.join(skillPath, 'logic.js'))) {
-    // Dynamically import
+  // Prefer TypeScript logic, fall back to JavaScript
+  const tsLogicPath = path.join(skillPath, 'logic.ts');
+  if (fs.existsSync(tsLogicPath)) {
+    const module = await import(`${skillPath}/logic.ts`);
+    const handler = module.default ?? module;
+    return await handler(input);
+  }
+
+  const jsLogicPath = path.join(skillPath, 'logic.js');
+  if (fs.existsSync(jsLogicPath)) {
     const module = await import(`${skillPath}/logic.js`);
-    return await module.default(input);
+    const handler = module.default ?? module;
+    return await handler(input);
   }
   
   // Otherwise, return markdown + let GPT-5 decide
@@ -367,11 +374,11 @@ const tools = await registry.getToolDefinitions();
 ```typescript
 // ❌ BAD: All logic loaded upfront (memory inefficient)
 for (const skill of skills) {
-  skill.logic = require(`./skills/${skill.name}/logic.js`);
+  skill.logic = require(`./skills/${skill.name}/logic.ts`); // or logic.js
 }
 
 // ✅ GOOD: Load on-demand (lazy-load)
-// Only load logic.js when invokeSkill() is called
+// Only load logic.ts/logic.js when invokeSkill() is called
 ```
 
 ### Anti-Pattern 3: Don't Manually Manage Chat State
