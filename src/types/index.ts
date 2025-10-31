@@ -108,6 +108,134 @@ export interface Message {
   createdAt?: Date;
 }
 
+export type ActivityStatus =
+  | 'idle'
+  | 'thinking'
+  | 'tool-calling'
+  | 'streaming'
+  | 'blocked'
+  | 'done'
+  | 'error';
+
+export interface ActivityDescriptor {
+  title: string;
+  status: ActivityStatus;
+  stepsTotal?: number;
+  stepIndex?: number;
+  label?: string;
+  startedAt: string;
+}
+
+export interface ActivityMessage {
+  role: 'assistant';
+  id: string;
+  type: 'activity';
+  activity: ActivityDescriptor;
+}
+
+export type ActivityUpdatePayload =
+  | { kind: 'step.start'; title: string; key?: string }
+  | { kind: 'step.update'; text: string }
+  | { kind: 'tool.call'; name: string; args?: Record<string, unknown> }
+  | { kind: 'tool.result'; name: string; summary?: string }
+  | { kind: 'status'; status: ActivityStatus }
+  | { kind: 'warning'; text: string }
+  | { kind: 'error'; text: string };
+
+export interface ActivityUpdateMessage {
+  role: 'assistant';
+  id: string;
+  type: 'activity.update';
+  activityId: string;
+  update: ActivityUpdatePayload;
+}
+
+export interface ActivityDoneMessage {
+  role: 'assistant';
+  id: string;
+  type: 'activity.done';
+  activityId: string;
+  durationMs?: number;
+}
+
+export type ActivityUiMessage =
+  | ActivityMessage
+  | ActivityUpdateMessage
+  | ActivityDoneMessage;
+
+export function isActivityMessage(value: unknown): value is ActivityMessage {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+
+  const record = value as Partial<ActivityMessage>;
+  if (record.role !== 'assistant' || record.type !== 'activity') {
+    return false;
+  }
+
+  const activity = record.activity as Partial<ActivityDescriptor> | undefined;
+  return (
+    typeof record.id === 'string' &&
+    typeof activity === 'object' &&
+    activity !== null &&
+    typeof activity.title === 'string' &&
+    typeof activity.status === 'string' &&
+    typeof activity.startedAt === 'string'
+  );
+}
+
+export function isActivityUpdateMessage(value: unknown): value is ActivityUpdateMessage {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+
+  const record = value as Partial<ActivityUpdateMessage>;
+  if (record.role !== 'assistant' || record.type !== 'activity.update') {
+    return false;
+  }
+
+  if (typeof record.id !== 'string' || typeof record.activityId !== 'string') {
+    return false;
+  }
+
+  const update = record.update as ActivityUpdatePayload | undefined;
+  if (!update || typeof update !== 'object') {
+    return false;
+  }
+
+  switch (update.kind) {
+    case 'step.start':
+      return typeof update.title === 'string';
+    case 'step.update':
+      return typeof update.text === 'string';
+    case 'tool.call':
+      return typeof update.name === 'string';
+    case 'tool.result':
+      return typeof update.name === 'string';
+    case 'status':
+      return typeof update.status === 'string';
+    case 'warning':
+    case 'error':
+      return typeof update.text === 'string';
+    default:
+      return false;
+  }
+}
+
+export function isActivityDoneMessage(value: unknown): value is ActivityDoneMessage {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+
+  const record = value as Partial<ActivityDoneMessage>;
+  return (
+    record.role === 'assistant' &&
+    record.type === 'activity.done' &&
+    typeof record.id === 'string' &&
+    typeof record.activityId === 'string'
+  );
+}
+
 /**
  * Workflow Execution - Current state of workflow execution
  */

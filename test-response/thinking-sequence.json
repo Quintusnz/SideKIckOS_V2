@@ -1,0 +1,75 @@
+[
+  {
+    "role": "assistant",
+    "type": "activity",
+    "id": "act_123",
+    "activity": {
+      "title": "Research & Synthesis",
+      "status": "thinking",
+      "stepIndex": 1,
+      "stepsTotal": 3,
+      "label": "Planning…",
+      "startedAt": "2025-10-31T02:21:00Z"
+    }
+  },
+  {
+    "role": "assistant",
+    "type": "activity.update",
+    "id": "u1",
+    "activityId": "act_123",
+    "update": { "kind": "step.start", "title": "Plan approach" }
+  },
+  {
+    "role": "assistant",
+    "type": "activity.update",
+    "id": "u2",
+    "activityId": "act_123",
+    "update": { "kind": "step.update", "text": "Defining search terms…" }
+  },
+  {
+    "role": "assistant",
+    "type": "activity.update",
+    "id": "u3",
+    "activityId": "act_123",
+    "update": {
+      "kind": "tool.call",
+      "name": "web.search",
+      "args": { "q": "site:docs vercel ai sdk v5 UIMessage" }
+    }
+  },
+  {
+    "role": "assistant",
+    "type": "activity.update",
+    "id": "u4",
+    "activityId": "act_123",
+    "update": { "kind": "tool.result", "name": "web.search", "summary": "3 docs found" }
+  },
+  {
+    "role": "assistant",
+    "type": "activity.update",
+    "id": "u5",
+    "activityId": "act_123",
+    "update": { "kind": "status", "status": "streaming" }
+  },
+  {
+    "role": "assistant",
+    "type": "activity.update",
+    "id": "u6",
+    "activityId": "act_123",
+    "update": { "kind": "step.start", "title": "Summarize findings" }
+  },
+  {
+    "role": "assistant",
+    "type": "activity.update",
+    "id": "u7",
+    "activityId": "act_123",
+    "update": { "kind": "step.update", "text": "Drafting summary…" }
+  },
+  {
+    "role": "assistant",
+    "type": "activity.done",
+    "id": "u8",
+    "activityId": "act_123",
+    "durationMs": 7421
+  }
+]
