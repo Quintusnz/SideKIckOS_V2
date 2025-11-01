@@ -1,12 +1,15 @@
 "use client";
 
 import { create } from "zustand";
+import { FALLBACK_TIMELINE_EVENTS, mapActivityTimelineToEvents } from "@/lib/timeline";
 import type {
   ActivityDoneMessage,
+  ActivityHistoryEntry,
+  ActivityHistoryPhaseSummary,
   ActivityMessage,
   ActivityStatus,
+  ActivityTimelineEntry,
   ActivityUpdateMessage,
-  ActivityUpdatePayload,
 } from "@/types";
 
 const STATUS_COPY: Record<ActivityStatus, string> = {
@@ -44,22 +47,6 @@ export interface ActivityChip {
   meta?: Record<string, unknown>;
 }
 
-type TimelineKind = "activity.start" | "activity.done" | ActivityUpdatePayload["kind"];
-
-export interface ActivityTimelineEntry {
-  id: string;
-  activityId: string;
-  timestamp: number;
-  kind: TimelineKind;
-  title?: string;
-  text?: string;
-  name?: string;
-  summary?: string;
-  args?: Record<string, unknown>;
-  status?: ActivityStatus;
-  stepIndex?: number;
-}
-
 interface ActivityRecord {
   id: string;
   title: string;
@@ -87,6 +74,7 @@ interface ActivityStoreState {
   chips: ActivityChip[];
   timeline: ActivityTimelineEntry[];
   activeStep?: { index: number; title?: string };
+  history: ActivityHistoryEntry[];
   ingestActivityMessage: (message: ActivityMessage) => void;
   ingestActivityUpdate: (message: ActivityUpdateMessage) => void;
   ingestActivityDone: (message: ActivityDoneMessage) => void;
@@ -94,24 +82,12 @@ interface ActivityStoreState {
   markError: (message: string) => void;
   clearCurrent: () => void;
   reset: () => void;
+  clearHistory: () => void;
   setCollapsed: (collapsed: boolean) => void;
   toggleCollapsed: () => void;
   openDetails: () => void;
   closeDetails: () => void;
 }
-
-const INITIAL_STATE = {
-  activities: {} as Record<string, ActivityRecord>,
-  currentActivityId: undefined as string | undefined,
-  currentActivity: undefined as ActivityRecord | undefined,
-  status: "idle" as ActivityStatus,
-  label: "",
-  collapsed: false,
-  detailsOpen: false,
-  chips: [] as ActivityChip[],
-  timeline: [] as ActivityTimelineEntry[],
-  activeStep: undefined as { index: number; title?: string } | undefined,
-};
 
 function now(): number {
   return Date.now();
@@ -192,7 +168,133 @@ function findActiveStepChip(chips: ActivityChip[]): ActivityChip | undefined {
   return undefined;
 }
 
-export const useActivityStore = create<ActivityStoreState>()((set) => ({
+const HISTORY_STORAGE_KEY = "sidekick.activities.history";
+const HISTORY_LIMIT = 12;
+
+function sanitizeHistoryPhase(value: unknown): ActivityHistoryPhaseSummary | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const phase = value as Partial<ActivityHistoryPhaseSummary>;
+  if (
+    typeof phase.id !== "string" ||
+    typeof phase.title !== "string" ||
+    typeof phase.summary !== "string" ||
+    typeof phase.kind !== "string"
+  ) {
+    return null;
+  }
+
+  const kind = phase.kind;
+  if (kind !== "step" && kind !== "tool" && kind !== "artifact" && kind !== "message" && kind !== "error") {
+    return null;
+  }
+
+  return {
+    id: phase.id,
+    title: phase.title,
+    summary: phase.summary,
+    kind,
+    artifactLabel: typeof phase.artifactLabel === "string" ? phase.artifactLabel : undefined,
+  };
+}
+
+function sanitizeHistoryEntry(value: unknown): ActivityHistoryEntry | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const record = value as Partial<ActivityHistoryEntry>;
+  if (
+    typeof record.id !== "string" ||
+    typeof record.title !== "string" ||
+    typeof record.status !== "string" ||
+    typeof record.label !== "string" ||
+    typeof record.startedAt !== "string" ||
+    typeof record.completedAt !== "string" ||
+    !Array.isArray(record.phases)
+  ) {
+    return null;
+  }
+
+  const status = record.status as ActivityStatus;
+  if (!(status in STATUS_COPY)) {
+    return null;
+  }
+
+  const phases = record.phases
+    .map((phase) => sanitizeHistoryPhase(phase))
+    .filter((phase): phase is ActivityHistoryPhaseSummary => Boolean(phase));
+
+  return {
+    id: record.id,
+    title: record.title,
+    status,
+    label: record.label,
+    startedAt: record.startedAt,
+    completedAt: record.completedAt,
+    durationMs: typeof record.durationMs === "number" ? record.durationMs : undefined,
+    phases,
+  };
+}
+
+function loadPersistedHistory(): ActivityHistoryEntry[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  try {
+    const raw = window.localStorage.getItem(HISTORY_STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed
+      .map((entry) => sanitizeHistoryEntry(entry))
+      .filter((entry): entry is ActivityHistoryEntry => Boolean(entry))
+      .slice(0, HISTORY_LIMIT);
+  } catch {
+    return [];
+  }
+}
+
+function persistHistory(history: ActivityHistoryEntry[]): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history));
+  } catch {
+    // ignore persistence errors
+  }
+}
+
+function createInitialState(history: ActivityHistoryEntry[] = loadPersistedHistory()) {
+  return {
+    activities: {} as Record<string, ActivityRecord>,
+    currentActivityId: undefined as string | undefined,
+    currentActivity: undefined as ActivityRecord | undefined,
+    status: "idle" as ActivityStatus,
+    label: "",
+    collapsed: false,
+    detailsOpen: false,
+    chips: [] as ActivityChip[],
+    timeline: [] as ActivityTimelineEntry[],
+    activeStep: undefined as { index: number; title?: string } | undefined,
+    history: [...history],
+  };
+}
+
+const INITIAL_STATE = createInitialState();
+
+export const useActivityStore = create<ActivityStoreState>()((set, get) => ({
   ...INITIAL_STATE,
   ingestActivityMessage: (message) => {
     const label = message.activity.label ?? fallbackLabel(message.activity.status);
@@ -425,6 +527,34 @@ export const useActivityStore = create<ActivityStoreState>()((set) => ({
       };
 
       const activities = { ...state.activities, [updatedRecord.id]: updatedRecord };
+      const phases = mapActivityTimelineToEvents(updates, { includeFallback: false });
+      const condensedPhases: ActivityHistoryPhaseSummary[] = (phases.length > 0 ? phases : FALLBACK_TIMELINE_EVENTS).map(
+        (phase) => ({
+          id: phase.id,
+          title: phase.title,
+          summary: phase.summary ?? "Summary unavailable.",
+          kind: phase.kind,
+          artifactLabel: phase.artifactLabel,
+        }),
+      );
+
+      const completedAt = new Date(timestamp).toISOString();
+      const historyEntry: ActivityHistoryEntry = {
+        id: updatedRecord.id,
+        title: updatedRecord.title,
+        status: updatedRecord.status,
+        label: updatedRecord.label,
+        startedAt: updatedRecord.startedAt,
+        completedAt,
+        durationMs: updatedRecord.durationMs,
+        phases: condensedPhases,
+      };
+
+      const history = [
+        historyEntry,
+        ...state.history.filter((entry) => entry.id !== historyEntry.id),
+      ].slice(0, HISTORY_LIMIT);
+      persistHistory(history);
 
       return {
         activities,
@@ -435,6 +565,7 @@ export const useActivityStore = create<ActivityStoreState>()((set) => ({
         chips,
         timeline: updates,
         activeStep: undefined,
+        history,
       };
     });
   },
@@ -477,7 +608,17 @@ export const useActivityStore = create<ActivityStoreState>()((set) => ({
     }));
   },
   reset: () => {
-    set({ ...INITIAL_STATE });
+    set((state) => ({
+      ...state,
+      ...createInitialState(state.history),
+    }));
+  },
+  clearHistory: () => {
+    persistHistory([]);
+    set((state) => ({
+      ...state,
+      history: [],
+    }));
   },
   setCollapsed: (collapsed) => {
     set((state) => ({

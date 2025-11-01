@@ -1,3 +1,4 @@
+import type { EventKind } from './timeline';
 /**
  * SideKick - Core Type Definitions
  * Central place for all TypeScript interfaces and types
@@ -141,6 +142,41 @@ export type ActivityUpdatePayload =
   | { kind: 'status'; status: ActivityStatus }
   | { kind: 'warning'; text: string }
   | { kind: 'error'; text: string };
+
+export type TimelineKind = 'activity.start' | 'activity.done' | ActivityUpdatePayload['kind'];
+
+export interface ActivityTimelineEntry {
+  id: string;
+  activityId: string;
+  timestamp: number;
+  kind: TimelineKind;
+  title?: string;
+  text?: string;
+  name?: string;
+  summary?: string;
+  args?: Record<string, unknown>;
+  status?: ActivityStatus;
+  stepIndex?: number;
+}
+
+export interface ActivityHistoryPhaseSummary {
+  id: string;
+  title: string;
+  summary: string;
+  kind: EventKind;
+  artifactLabel?: string;
+}
+
+export interface ActivityHistoryEntry {
+  id: string;
+  title: string;
+  status: ActivityStatus;
+  label: string;
+  startedAt: string;
+  completedAt: string;
+  durationMs?: number;
+  phases: ActivityHistoryPhaseSummary[];
+}
 
 export interface ActivityUpdateMessage {
   role: 'assistant';

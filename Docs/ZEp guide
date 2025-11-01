@@ -1,0 +1,466 @@
+Zep Memory Integration Guide for Next.js AI Coder Agents
+Overview of Zep Memory Service
+Zep is a long-term memory service and knowledge graph for AI assistants, designed to persist and recall conversation history and relevant data for each user[1]. By integrating Zep into your Next.js + TypeScript application, your AI coder agents can remember past interactions, user preferences, and documents over long periods. This leads to more personalized and context-aware assistance, while reducing hallucinations and repeated questions[2]. Zep automatically generates embeddings for stored text (using semantic vector representations) and supports hybrid search (combining semantic similarity with keyword search) to retrieve relevant context quickly[3].
+Key capabilities of Zep include:
+•	Agent Memory (Chat History): Persist user–assistant conversations across sessions. Zep stores chat messages and builds a temporal MemoryGraph of facts and entities about the user from these dialogues[4][5].
+•	Knowledge Graph (MemoryGraph): Zep represents knowledge as a graph of nodes (entities) and edges (relationships/facts). Each user gets a personal Knowledge Graph that evolves with new information, including time-bound facts (temporal relationships)[6].
+•	Document & Preference Storage: Beyond chat, you can add external data (documents, JSON records, user profile info) to the graph for each user or in shared graphs. Zep will parse and incorporate these into the MemoryGraph, with automatic chunking and embedding.
+•	Context Retrieval: Zep provides APIs to retrieve a context block of relevant memory for a conversation (e.g. a bullet-point summary of important facts)[7], or to search the memory graph with queries and filters (including vector similarity search) for specific info[3].
+•	Temporal & Updatable Facts: Facts stored on edges include timestamps for when they became valid/invalid, enabling the agent to distinguish outdated info[8]. If new information contradicts old facts, Zep marks old facts as invalid and adds updated facts automatically[9].
+•	Scalability & Performance: Zep handles continuous, incremental updates with sub-second query latency for memory retrieval[10][11]. Data is persisted in a database so memory scales with your application[12].
+In the following sections, we provide a comprehensive reference on installing Zep, understanding the MemoryGraph model, and using Zep’s SDK in a Next.js (TypeScript) environment. Code examples and best practices are included to help your AI agents effectively store, retrieve, update, and utilize long-term memory in orchestrated multi-agent workflows.
+Installation and Setup of Zep in a Next.js Project
+1. Obtain API Key and Choose SDK
+To use Zep, first create a free account on Zep Cloud and obtain a Project API key (from the Zep dashboard's Project Settings)[13]. You will use this API key to authenticate your client.
+Zep offers two TypeScript SDK packages: - Zep Cloud SDK (@getzep/zep-cloud) – connects to Zep’s hosted cloud service (most common). - Zep Community SDK (@getzep/zep-js) – for self-hosting Zep Community Edition on your own server.
+Install the appropriate package using your package manager:
+# Using npm
+npm install @getzep/zep-cloud
+
+# If self-hosting, you might use:
+# npm install @getzep/zep-js
+```[14]
+
+> **Note:** Zep v3 is the latest version. If you need compatibility with older Zep v0.x, install a legacy version as noted in the docs[15], but for new projects use the latest v3 SDK.
+
+### 2. Initialize the Zep Client
+
+After installing, initialize a Zep client in your Next.js app. It’s good practice to keep the API key in an environment variable (e.g. `.env.local`). For example, in Next.js you can add `ZEP_API_KEY=<your key>` to the env file and access it via `process.env.ZEP_API_KEY`. 
+
+In a setup or utility module (e.g. `utils/zepClient.ts`), create a Zep client instance:
+
+```ts
+import { ZepClient } from "@getzep/zep-cloud";
+
+const zepClient = new ZepClient({
+  apiKey: process.env.ZEP_API_KEY!,  // Project API key for Zep Cloud
+  // baseUrl: "http://localhost:8000" // If using self-hosted Zep, specify the base URL
+});
+
+export default zepClient;
+This uses the Zep Cloud SDK’s ZepClient class, providing your API key[16][17]. By default it will connect to Zep’s cloud endpoint; if you run a local Zep server, include the baseUrl. You can now import this zepClient wherever you need to interact with memory.
+Next.js Note: If using App Router, you might initialize the client in a route handler or a React context provider. Ensure the API key is not exposed to the browser (use server-side code or secure API routes to interact with Zep). The Zep SDK will make HTTPS requests to the Zep service.
+3. Project Setup Considerations
+•	TypeScript Types: The SDK provides TypeScript types for users, threads, messages, etc. (often via interfaces like User, Thread, Message, etc.). You can import or define these as needed. For instance, messages can be simple JS objects with role, content, and name fields.
+•	Async Usage: The Zep client methods are asynchronous (returning promises). Use await or .then() when calling them. You can also create an AsyncZepClient if provided (similar to the Python AsyncZep) but typically the normal client is fine inside Next.js API routes (which can be async).
+•	Environment Variables: In Next.js, prefix your key with NEXT_PUBLIC_ only if you need it on the client side (usually you should not, keep it server-side). For server-side (Node) code, a normal env variable is fine.
+With the client set up, you’re ready to build and use the memory model. Next, we’ll explore Zep’s MemoryGraph structure in detail.
+Understanding the MemoryGraph Model (Nodes, Edges, Embeddings)
+Zep represents all stored information in a temporal knowledge graph called the MemoryGraph[18]. This graph consists of three main components[6]:
+•	Entity Nodes (nodes): Nodes represent real-world entities or concepts (people, places, things, ideas) that have been identified in the data. Each node aggregates information about that entity, including a summary of facts from all related edges[19]. For example, a user named "Jane Smith" would correspond to a user node, and other nodes might be "Acme Corp" (her employer), "tables" (a concept she mentioned liking), etc.
+•	Relationship Edges (edges): Edges connect two nodes and represent a fact or interaction between those entities[4][20]. Each edge has a semantic fact (text describing the relationship) and can be thought of as a subject-predicate-object triple. For example, an edge could represent the fact “Jane Smith works at Acme Corp.” or “Jane prefers tables over bullet points.”. The fact text is stored as an attribute of the edge (often called fact or content). Edges also carry temporal metadata:
+•	created_at: when the fact was recorded in Zep (when Zep learned this info).
+•	valid_at: the time the fact became true (start of validity period).
+•	invalid_at: when the fact became false or outdated (if it gets superseded).
+•	expired_at: when Zep learned the fact ended (typically equals invalid_at discovery time)[8].
+These timestamps allow Zep to maintain historical context and handle changing facts over time (temporal knowledge). For instance, if Jane later leaves Acme for another job, Zep can mark the “works at Acme” edge as invalid at the date of departure and add a new edge for the new job[9]. - Episodic Nodes (episodes): Episodes represent raw data inputs stored in the graph[21]. Each time you add data to Zep (whether a chat message, a document snippet, or JSON), Zep creates an episode node for that chunk of data. An episode node links to the entity nodes and edges extracted from that data. You can think of an episode as a container for a message or document chunk, and the edges are facts extracted from that episode. Episodes are useful when searching the graph (you can search within episodes to find the original context of facts)[22]. Every chat message added or document chunk ingested will correspond to an episode in the user’s graph.
+MemoryGraph Example: Imagine a user says in a chat: “Hi, I’m Jane Smith and I work at Acme Corp.” When this message is added: - Zep will create (or update) a node for "Jane Smith" (the user) and a node for "Acme Corp". - It will create an edge between "Jane Smith" and "Acme Corp" with a fact like "Jane Smith works at Acme Corp", with valid_at = now. - It will create an episode node representing this message. The episode connects to the Jane Smith and Acme nodes via that edge (and possibly also an edge like "Jane Smith’s employer is Acme Corp").
+If later the user says: “I left Acme Corp last week and joined Globex Inc.”, Zep will: - Mark the "works at Acme Corp" edge as invalid (setting its invalid_at to the date she left). - Add a new node for "Globex Inc" if not already, and a new edge "Jane Smith works at Globex Inc" with valid_at = last week. - Create a new episode for this message, linking to these nodes/edges.
+This way, the MemoryGraph always reflects the latest state of facts (Jane’s current employer is Globex) while keeping the old facts in history (the Acme edge is stored but marked with an end date)[9].
+Embeddings and Vector Search: Zep automatically embeds textual data and facts to enable semantic search[2]. Specifically: - Each message or text chunk you add is converted to a vector embedding asynchronously (using Zep’s internal embedding model or API)[23]. This allows similarity search on the content of episodes. - Summaries of nodes and possibly facts on edges are also embedded to allow searching the graph for relevant nodes or relationships conceptually, not just by exact keywords[3]. - Zep’s graph search API uses a hybrid approach: it performs semantic similarity search on embeddings and a BM25 keyword search on text, then fuses the results to balance conceptual relevance and exact matches[3]. This ensures that searches like "project Jane is working on" can find relevant info even if phrased differently than stored.
+MemoryGraph for Each User: In Zep, each end-user of your application gets their own isolated MemoryGraph (often called the user graph)[24]. All their chat threads and added data feed into this single graph, providing a unified view of the user’s knowledge and preferences. Multiple conversation threads are merged at the knowledge level – the graph doesn’t partition facts by thread, it integrates them to form a comprehensive user profile[25]. (This means if the user tells one agent their preference and later interacts in a different session or with a different agent that uses the same user ID, the preference will still be recalled from the shared memory.)
+For shared or global knowledge that isn’t user-specific, you can also create separate graphs (identified by a graph_id not tied to a user) – for example, a graph of common documents or code libraries that all users or agents can access. We’ll discuss this in Advanced Usage, but keep in mind you have the flexibility of user-specific graphs and standalone graphs for knowledge base data.
+Storing Memories in Zep (Add, Update, Delete Operations)
+This section covers how to store different types of memory in Zep: chat histories, user preferences, uploaded files/documents, and other custom data. We will also cover updating existing memory and deleting data when needed. All operations are done through the Zep client’s APIs.
+Creating Users and Threads
+Before adding any memory, ensure you have a User created in Zep to represent the human user, and a Thread for the conversation (if using chat). A User is identified by a user_id (any string, e.g. a UUID or username/email)[26]. Each user has a dedicated knowledge graph as discussed. Threads represent individual conversations (or sessions) that group messages.
+Create a User: Use zepClient.user.add() to add a new user. You can (and should) provide metadata like email and name if available, as this helps Zep map data to the user’s node (e.g., if a document contains the user’s email, it can attach it correctly)[27].
+// Create a new user in Zep
+await zepClient.user.add({
+  user_id: "user123",                   // Unique ID for the user
+  first_name: "Jane",
+  last_name: "Smith",
+  email: "[email protected]"
+});
+Ensure user_id matches how you identify the user in your app (you’ll reuse this ID for all memory ops for that user). The first_name/last_name improve entity linking[27]. You can always update these later with user.update() if needed (e.g., to add name after initial creation)[28].
+Create a Thread: Once the user exists, create a conversation thread for a new chat session. Typically you generate a random thread ID (UUID):
+import { v4 as uuidv4 } from 'uuid';
+const threadId = uuidv4();
+await zepClient.thread.create({ thread_id: threadId, user_id: "user123" });
+This initializes an empty thread associated with Jane (user123)[29]. The thread_id can be any unique string; using a UUID ensures uniqueness. You’ll use this threadId when adding messages or retrieving context for this session.
+Behind the scenes: Creating a thread doesn’t immediately add anything to memory, but it prepares Zep to group subsequent messages. All messages added to this thread will contribute to Jane’s user graph[5]. Remember that even though the knowledge graph is user-wide, threads help scope recent conversations and allow multiple separate dialogs.
+Adding Chat Messages to Memory (Agent Conversation History)
+To record the conversation between the user and the AI assistant, use the thread.add_messages API. This ingests messages into the thread (and by extension into the user’s memory graph) in chronological order. Typically, you would call this each time there’s a new message from user or assistant that you want Zep to remember.
+Message format: A message needs a role (usually "user" or "assistant"), the content text, and optionally a name. For user messages, the name should ideally be the user’s name; for the assistant, you can use a consistent name (e.g., "AI Assistant"). Providing names is helpful for the knowledge graph as it treats named entities better (e.g., linking “Jane” to the user node)[30].
+Example – user introduces herself and assistant responds:
+const messages = [
+  {
+    role: "user",
+    name: "Jane",  // user's name for entity linking
+    content: "Hi, I'm Jane Smith and I work at Acme Corp."
+  },
+  {
+    role: "assistant",
+    name: "AI Assistant",  // assistant name (can be arbitrary)
+    content: "Hello Jane! Nice to meet you. How can I help you with Acme Corp today?"
+  }
+];
+await zepClient.thread.add_messages(threadId, { messages });
+This will append both messages to the thread conversation. Zep will extract facts from these messages asynchronously to update Jane’s knowledge graph (for instance, capturing that Jane Smith works at Acme Corp as a fact edge)[5]. Adding messages via thread.add_messages is the primary way the user’s memory grows during chats – it’s essentially feeding the conversation into long-term memory.
+A few notes for chat memory: - You can add messages in batches (as shown) or one by one. The order in the array should be chronological if batching. - The return of add_messages might include the updated thread or message statuses (check SDK docs), but often you won’t need the return value. The data is stored on Zep’s side regardless. - Zep processes new messages asynchronously. They become queryable typically in a couple of seconds. The thread.add_messages call itself is fast (doesn’t block on embedding or analysis). - If a user has multiple threads (e.g., separate chats on different topics or with different sub-agents), all those conversations funnel into the same user memory graph. The memory graph is not partitioned by thread[31]. However, retrieval can be scoped by thread context (more on that in Retrieval section).
+Adding External Data (Documents, Files, Preferences) to Memory
+In addition to chat logs, your agent may need to remember user-provided files, documents, or preferences that are not conveyed via a message. Zep provides a flexible graph.add API to inject arbitrary data into the user’s graph outside of the chat threads[32]. This is useful for things like: - A user uploads a document (PDF, code file, etc.) – you extract text and add it to memory. - You have historical data about the user (profile info, settings) to preload into memory. - Storing the user's coding style or preferences explicitly as data.
+The graph.add method accepts: - A user_id (to add to that user’s graph) or a graph_id (to add to a standalone graph). - A type indicating the data format: "text", "message", or "json". - The data content (string). For JSON type, you pass a JSON string.
+1. Text Data: Use type: "text" for raw text without a specific speaker context (e.g., content from a document or notes)[33][34]. Example: adding a document snippet to Jane’s memory:
+const docText = "Jane Smith is working on Project Alpha and Project Beta.";
+await zepClient.graph.add({
+  user_id: "user123",
+  type: "text",
+  data: docText
+});
+Zep will ingest this text, create an episode for it, and extract any facts (maybe edges linking Jane Smith to projects named Alpha and Beta).
+2. Message Data: Use type: "message" if you have text that includes a speaker name or dialog format (e.g., an email transcript "From John: ...") that you want Zep to parse similarly to chat messages[35][36]. You can prepend the speaker name in the data and Zep will treat it as a message. For example:
+const emailLine = "Jane (user): Please remember I prefer tables over bullet points.";
+await zepClient.graph.add({
+  user_id: "user123",
+  type: "message",
+  data: emailLine
+});
+Here we explicitly format as Name (role): content. Zep will treat "Jane" as the user speaker and ingest the preference stated as if it were said in a conversation.
+3. JSON Data: Use type: "json" to add structured data in JSON format[37][38]. The JSON should be stringified. This is useful for adding records like user profile objects, or any data where keys and values matter. For example:
+const prefs = { theme: "dark", fontSize: 14, prefersTables: true };
+await zepClient.graph.add({
+  user_id: "user123",
+  type: "json",
+  data: JSON.stringify(prefs)
+});
+Zep will parse JSON and incorporate it. It might create nodes and edges for each key-value (depending on content; keys might become relationships). For instance, a "prefersTables": true could result in an edge or fact in the graph about that preference.
+All these graph.add calls return a new Episode object (often containing an uuid for the episode) which represents the added data in the graph[39]. You can store that UUID if you may later want to delete or reference that specific entry.
+Important: The graph.add endpoint has a size limit of 10,000 characters per call[40]. If you have a large document or file: - Chunk the data: Split the text into chunks under 10k chars (e.g., by paragraphs or sections) and call graph.add for each chunk. It’s recommended to use smaller chunks (a few thousand characters each) so that Zep can capture all entities and relationships; too large a chunk may cause some info to be missed[41]. - Optionally, if the document is very large, you can employ a technique like overlapping chunks (to preserve context between chunks) or use advanced approaches (Zep references Anthropic’s contextualized retrieval technique for chunking docs)[40]. But as a simple rule: ensure each chunk is self-contained enough for analysis. - After adding all chunks, Zep will have ingested the entire document. You can query across all of it via the graph (since all chunks’ facts go into the user graph).
+Example – Handling a File Upload: Suppose a user uploads a Markdown file guide.md they wrote. You might do:
+// Pseudocode for handling file upload content
+const fileContent = await getTextFromFile(uploadedFile);
+const CHUNK_SIZE = 8000; 
+for (let i = 0; i < fileContent.length; i += CHUNK_SIZE) {
+  const chunk = fileContent.slice(i, i + CHUNK_SIZE);
+  await zepClient.graph.add({ user_id: userId, type: "text", data: chunk });
+}
+This will add multiple episodes to the graph. Zep will extract facts from each (e.g., if the guide had titles or code references, they become nodes/edges).
+Storing User Preferences and Styles in Memory
+User preferences (e.g., "I prefer tables over bullet points") or style guidelines are crucial for personalized agent behavior. There are a couple of ways to ensure such preferences are captured in Zep:
+1.	Capture via Chat: If the user tells the agent their preference during conversation, simply adding that message via thread.add_messages (as shown earlier) will let Zep pick it up. Zep’s NLP should interpret "I prefer tables over bullets" as a fact about the user’s preference. It might create an edge in the graph where Jane (user) has a relationship "prefers" -> "tables" and possibly mark that it’s a preference over bullets (the exact graph outcome can vary, but at minimum the content is stored and searchable).
+2.	Explicit Fact Insertion: You can directly insert a preference as a fact using graph.add or the more structured graph.add_fact_triple.
+Using graph.add with text is straightforward: e.g.
+await zepClient.graph.add({
+  user_id: "user123",
+  type: "text",
+  data: "Jane Smith prefers table formatting over bullet points."
+});
+This will add that sentence and Zep will likely create a "prefers" edge between Jane Smith and an entity for "table formatting" (and possibly another for "bullet points" with a negative or comparative relation).
+For a more controlled addition, graph.add_fact_triple allows you to specify the components of a fact manually[42]:
+await zepClient.graph.add_fact_triple({
+  user_id: "user123",
+  fact: "Jane prefers tables over bullet points",
+  fact_name: "PREFERS",            // A label for the relationship
+  source_node_name: "Jane Smith",  // Source entity
+  target_node_name: "tables format" // Target entity (you might choose how to name it)
+});
+This instructs Zep to create (or use existing) nodes for "Jane Smith" and "tables format" and connect them with a relationship labeled "PREFERS" carrying the fact text[43]. If a conflicting fact existed (e.g., earlier "Jane prefers bullet points"), Zep would mark that old edge as invalid automatically when adding the new one[44][45]. This method is useful for preferences because if the user changes their mind later, each new fact triple can invalidate the previous preference, preserving history but ensuring the graph’s current truth reflects the latest choice.
+Tip: Decide on a consistent fact_name for certain categories of memory. For example, use "PREFERS" for all preference edges, "STYLE" for style-related facts, etc. This lets you later filter or query these specifically (e.g., search only edges of type PREFERS).
+Storing Styles/Formats: Similar to preferences, if a user has a preferred coding style or format (e.g., "prefer snake_case variable names"), you can add that as a fact. Either via chat ("Sure, I'll remember you prefer snake_case.") or via direct graph entry:
+await zepClient.graph.add({
+  user_id: userId,
+  type: "text",
+  data: "Jane Smith prefers snake_case for variable names."
+});
+This will ensure such style preferences are part of the memory and can be retrieved later to guide code generation.
+Updating Memory Entries
+In many cases, updating a memory is just a matter of adding new information. Zep’s design handles updates by versioning facts over time: - If you want to change a stored preference or any fact, add the new fact (via chat or graph.add). Zep will automatically update the graph (invalidating old edges if applicable) rather than you manually editing the old entry[9]. - If you need to correct something that was wrong, you have a couple of options: - Add a new correct fact (the old one will remain but can be considered outdated). - Delete the incorrect data (covered below in deletion).
+For example, if initially a document stated "User's favorite color is blue" but later the user says it's green:
+// Update preference by adding a new fact
+await zepClient.graph.add({
+  user_id: userId,
+  type: "text",
+  data: "Jane Smith's favorite color is now green."
+});
+Zep will mark the "favorite color is blue" edge as invalid and add a new "favorite color is green" edge (with appropriate timestamps). The MemoryGraph always keeps track of which fact is currently valid[9].
+If you have structured data (JSON) that changes, you might choose to delete the old JSON episode and add a fresh one with updated info, or just add a new JSON which might partially overlap. Zep doesn’t exactly do diffs on JSON, but adding new JSON records that supersede old ones could be handled similarly (with edges being updated/invalidated if they conflict).
+Deleting Memory Entries (Cleanup)
+Memory cleanup might be needed in scenarios such as: a user requests their data be removed (Right to be Forgotten), you want to remove an incorrect piece of info, or you simply want to manage storage by dropping old irrelevant data.
+Zep offers deletion APIs at different levels: - Delete an Episode (data chunk): This removes a specific episode and all edges that originated from that episode[46]. Any nodes that become orphaned (not connected to any remaining episode) will also be deleted[47]. Use this when you want to remove a particular added document or a specific message’s influence. - Delete an Edge (fact relationship): This will remove a specific fact edge by UUID[48]. The two nodes that it connected will remain (even if isolated) because node deletion is not automatic for safety[49]. Use this if you want to surgically remove a fact from the graph without deleting entire episodes. (Currently, deleting nodes directly is not supported[50]). - Delete a Thread (conversation record): This removes the thread and its messages from the conversation history perspective, but does not remove the knowledge from the user’s graph[51]. The facts extracted from that thread will still exist in memory unless you also remove them via edges/episodes. Deleting threads is mainly for clearing chat logs, not memory. - Delete a User (and all memory): If you delete the user, Zep will delete that user’s entire graph, all threads, and all associated data in one call[52]. This is the nuclear option, used for account deletion or complete reset. It ensures no trace of the user remains in memory.
+Examples:
+•	To delete a specific episode by its UUID (which you might have from when you added it or by searching episodes):
+ 	await zepClient.graph.episode.delete({ uuid: "<episode_uuid>" });
+ 	This will remove that episode’s data. Any fact that was only supported by that episode will go away[46]. If some facts from that episode were also found in other episodes, the corresponding nodes may still retain those facts via other edges.
+•	To delete a specific fact edge by UUID:
+ 	await zepClient.graph.edge.delete({ uuid: "<edge_uuid>" });
+ 	After this, that relationship is gone. The related nodes remain (possibly without that connection)[48]. (For example, if you delete the edge "Jane prefers tables", Jane’s node and the "tables" node remain, but no "prefers" link between them.)
+•	To delete an entire user and all their memory (irreversible):
+ 	await zepClient.user.delete("user123");
+ 	This one call wipes the user’s threads and knowledge graph[52]. Use it for user data removal requests or when re-initializing a user from scratch. Be careful: once deleted, you’d have to re-add everything if needed.
+•	Deleting a thread:
+ 	await zepClient.thread.delete(threadId);
+ 	The immediate thread message history is deleted (so you won’t get those messages via thread.get anymore), but remember the knowledge remains in user memory[51]. If the user had, say, revealed an API key in that thread and you want it gone from memory, deleting the thread is not enough – you’d also need to search for any edges/nodes carrying that info and delete those episodes or edges.
+Data Retention Policies: If you plan to periodically cleanup older data (for example, delete facts older than 1 year), you might implement logic using the timestamps. Zep’s search allows filtering by created_at or valid_at ranges[53][54]. You could find edges older than a cutoff and remove them. However, out-of-the-box you must handle such retention manually by issuing deletions.
+By judicious use of these create, update, and delete operations, you can manage the lifecycle of the AI agent’s memory to keep it relevant and compliant with user wishes.
+Retrieving Memories and Using Them in Conversation
+Storing memory is only half the story – the agent needs to retrieve and utilize that memory to inform its responses. Zep provides powerful retrieval mechanisms to fetch relevant context when the agent is performing a task or responding to the user. This includes high-level context assembly (the Context Block) and low-level query capabilities (the Graph Search API).
+Automatic Context Retrieval with get_user_context
+The simplest way to get useful memory for a conversation is to use thread.get_user_context. This method returns a Context Block – a curated summary of the user’s relevant facts and history, tailored to the current conversation context[55]. Essentially, Zep looks at the recent messages in the thread and finds what information in the user’s memory graph is most pertinent, then returns it as a formatted block of text (often bullet points of facts).
+Example usage:
+const memory = await zepClient.thread.get_user_context({ thread_id: threadId });
+// The `memory` object includes a `context` string
+console.log(memory.context);
+The memory.context might look like:
+- Jane Smith works at Acme Corp since 2015.
+- Jane's account (Emily0e62) was suspended on 2024-11-14 due to payment failure.
+- Jane prefers tables over bullet points for data display.
+- Project Alpha is one of the projects Jane is involved in.
+...
+(This is an illustrative example combining possible facts; the actual output depends on what’s in memory and what the conversation is about. The format is typically bullet points or brief sentences each conveying one fact[56].)
+By default, get_user_context returns a summarized context block[57]. Summarized means Zep may combine related facts or shorten them for brevity (helpful for prompt size). You can request a basic context (unsummarized) if needed, which might just list raw facts without abstraction – the docs note that basic context retrieval has lower latency[58]. Check the SDK if there’s a parameter for summarized vs basic; often the default is summarized.
+You should include this context string in your LLM’s prompt (typically as part of the system or assistant prompt). For example, you might construct a system message like: "You are a coding assistant. The user has some known preferences and history: {memory.context}. Use this information when responding."
+When to use get_user_context: - At the start of a new conversation or a new turn, to gather any relevant memory given the current dialog. - It’s especially useful to automatically surface things like user preferences, past corrections, or factual info the user provided earlier that relates to the current query. - Note: This method uses the thread’s latest messages to filter relevance, so it’s context-aware. If the user abruptly asks about something unrelated to the current context, get_user_context might not return what you expect. In such cases, you might fall back to a manual graph.search (see below).
+Zep’s context assembly logic is quite powerful – it can, for example, include a few recent raw messages, plus a summary of older messages, plus globally relevant facts[59]. This is akin to windowed memory + long-term memory in one. Using get_user_context is the high-level, easy path to memory retrieval.
+Querying the MemoryGraph with Search
+For more control, or to fetch memory outside the scope of the immediate conversation, you can use zepClient.graph.search. This allows you to issue a query (in natural language or keywords) against the user’s memory graph (or any graph) and get specific pieces of information.
+How graph search works: Zep’s graph search is a hybrid: - It converts your query into an embedding and finds semantically similar content. - It also performs a BM25 keyword search. - It then reranks and fuses these results, using algorithms like Reciprocal Rank Fusion (RRF) by default[60]. The result is a list of matches (with scores) that are relevant both conceptually and literally to the query.
+Additionally, you can bias the search to prefer results connected to certain nodes (using a breadth-first search origin) if needed, but that’s an advanced use case[61][62].
+Search parameters: The search API has several parameters to tailor the results[63]: - user_id or graph_id: specify the target graph. For user-specific memory, use user_id: "user123". If you want to search a global/shared graph, use its graph_id (in that case omit user_id)[64]. - query: the query string (up to 400 characters)[64]. Keep queries concise and specific for best results[65]. - scope: one of "edges", "nodes", or "episodes"[66][67]. - Edges scope (default): returns matching facts/edges. This is most commonly what you want – specific factual statements relevant to the query[68]. - Nodes scope: returns relevant entities/nodes. This is useful if you want a summary of a concept or to find an entity related to your query[19]. (Result nodes have a summary of what’s known about them.) - Episodes scope: returns matching raw data chunks (e.g., pieces of a conversation or document)[22]. This can be useful to pinpoint the original context where something was mentioned (e.g. find the message in which "API key" was mentioned). - limit: number of results to return (default 10). - reranker: choose rerank strategy: "rrf" (default hybrid)[60], "mmr" (Maximal Marginal Relevance for diversity)[69], "cross_encoder" (for highest accuracy with a second-pass model)[70], etc. Most of the time you can stick with RRF or try MMR if you want more diverse facts. - search_filters: an object to filter by metadata[71]: - You can filter by specific node_labels (entity types) or edge_types to include, or exclude certain types (exclude_node_labels, exclude_edge_types)[71]. - You can filter by timestamps (created_at, valid_at, etc.) to a range to find facts that were valid in a certain time window[72]. - You can filter by min_fact_rating if you have implemented fact rating to only get important facts[73]. (Fact rating is an advanced feature where you tag some facts as more relevant; if used, you might set this to e.g. 0.5 to ignore trivial facts[74].)
+Using search is a more targeted approach than get_user_context. For instance: - If you specifically want to recall a user preference, you might search the user’s graph for "prefers" or a related keyword. - If you want to retrieve documents or code relevant to the user’s current request, you could use the user’s last question as a query to search their memory (which includes uploaded docs). - If multiple agents share a common knowledge graph (not tied to a user), you could query that global graph by graph_id for relevant info.
+Search examples:
+•	Find the projects Jane is working on:
+ 	const res = await zepClient.graph.search({
+  user_id: "user123",
+  query: "What projects is Jane working on?",
+  scope: "edges",
+  limit: 5
+});
+const edges = res.edges;  // an array of edge results
+edges.forEach(edge => {
+  console.log(edge.fact, edge.score);
+});
+ 	This might return edges like "Jane Smith is working on Project Alpha" and "Jane Smith is working on Project Beta" with high relevance[75][76]. Each edge result typically contains properties such as fact (text), maybe uuid, and a score. A higher score means more relevant[77].
+•	Retrieve all facts of type "PREFERS" for the user (to get preferences):
+ 	const res = await zepClient.graph.search({
+  user_id: userId,
+  query: "prefers", 
+  scope: "edges",
+  search_filters: { edge_types: ["PREFERS"] }
+});
+const prefs = res.edges.map(e => e.fact);
+// e.g. ["Jane prefers tables over bullet points.", "Jane prefers dark theme."]
+ 	Here we used a general query "prefers" (which will embed and also match the word "prefers") and filtered to edges labeled PREFERS. This should retrieve all preference statements. If you know you stored preferences with a specific keyword in the fact text, you could also search just by that keyword.
+•	Search within episodes (raw logs):
+ 	const res = await zepClient.graph.search({
+  user_id: userId,
+  query: "error 403",
+  scope: "episodes",
+  limit: 3
+});
+const episodes = res.episodes;
+ 	This could be used if the user says "When did I get a 403 error?" – searching episodes might directly find the conversation or log entry mentioning "error 403". Episode results might include the raw content of the message or data snippet, along with maybe an episode ID and metadata.
+Interpreting results: The structure of the search result object varies by scope: - For edges scope, you get res.edges, an array of edges. Each edge object typically has at least: fact (the fact text), score (relevance score), and possibly identifiers like uuid, source/target node references, and timestamps (you might see created_at, valid_at etc. in the object). - For nodes scope, you get res.nodes. Each node result might have a summary (string summarizing that entity), a list of labels or type, and an uuid. - For episodes scope, you get res.episodes. Each episode result could include the original content (text), the source (like which thread or doc), and maybe an uuid.
+Usually, you will just need the text (fact or content) from results to use in a prompt or logic. The scores can be used if you want to threshold or sort (they’re already sorted by relevance descending in the result array).
+Combining search with context: You can use graph.search in tandem with get_user_context. For example, you might retrieve the user’s core context via get_user_context and also do a graph.search on an external graph (like a global documentation graph) to fetch additional info. In a multi-agent setting, one agent might query the memory graph while another focuses on user dialogue.
+Utilizing Memory in Agent Workflows
+With retrieval methods in hand, the final step is integrating them into your agent’s workflow to truly make your AI “memoryful.” Here are some typical patterns with code sketches:
+1. Injecting Memory into LLM Prompts: The agent (or the orchestrator) should include relevant memory when constructing the prompt for the language model. For instance, in a Next.js API route handling the chat:
+// After receiving a new user message input:
+await zepClient.thread.add_messages(threadId, { messages: [ userMessageObj ] });
+
+// Retrieve memory context relevant to this turn
+const memory = await zepClient.thread.get_user_context({ thread_id: threadId });
+const memContext = memory.context;  // e.g., "- User prefers tables...\n- User works at Acme...\n..."
+
+// Construct system/developer prompt for the LLM
+const systemPrompt = `
+You are a helpful coding assistant. Here is some background about the user:
+${memContext}
+Answer the user's question using this information when relevant.
+`;
+
+// Now send systemPrompt + user message to the LLM (e.g., OpenAI API)
+const completion = await openai.createChatCompletion({
+  model: "gpt-4",
+  messages: [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: userMessageObj.content }
+  ]
+});
+const assistantReply = completion.data.choices[0].message.content;
+
+// Store the assistant reply in memory too
+await zepClient.thread.add_messages(threadId, { messages: [ 
+  { role: "assistant", name: "AI Assistant", content: assistantReply } 
+] });
+In this flow: - We add the user’s latest message to Zep so it’s part of the record. - We fetch the context string for that thread. - We build a prompt including that context. - After getting the LLM’s answer, we add the assistant’s reply back into Zep (so that any new info the assistant provided, or the flow of conversation, is recorded).
+This ensures a continuous memory: each turn, the agent knows the past via the context, and the memory gets updated with the new turn.
+2. Remembering User Preferences in Actions: Sometimes memory use is not just prompt context but driving program logic. For example, if the user prefers tables over bullets, the agent might decide to format output as a table without being explicitly asked each time.
+You can achieve this by checking memory before finalizing the response. For instance:
+// Pseudo-code to enforce formatting preferences
+async function formatAnswer(userId: string, rawAnswer: string) {
+  // Check memory for format preference
+  const res = await zepClient.graph.search({
+    user_id: userId,
+    query: "prefers table", scope: "edges", limit: 1
+  });
+  const prefersTables = res.edges?.[0]?.fact?.toLowerCase().includes("prefers tables");
+
+  if (prefersTables) {
+    return convertToTableFormat(rawAnswer);
+  }
+  return rawAnswer;
+}
+Here we explicitly query the user’s graph for anything about "prefers table". If we find an edge stating that preference, we alter the output formatting. This is a simple example – you might refine it by searching for any "prefers" edge and parsing it (maybe the user has multiple preferences).
+Another approach: tag such preferences in memory with a structured key (e.g., as JSON: { "formatPreference": "table" }) so that you can query that specifically or fetch the JSON via graph.search or user node fetch.
+3. Multi-Agent Orchestration: In Sidekick or multi-agent systems, you might have specialized agents (coding agent, testing agent, documentation agent, etc.) all needing access to the same user memory. The best practice is to use the same user_id for the same human user across all agents, so they all read/write to one MemoryGraph. For example: - Agent A and Agent B can both call zepClient.user.add (with same ID) and see that the user exists. - When Agent A learns something (adds a memory), Agent B can retrieve it later because it's under the same user graph.
+If agents correspond to separate threads, that’s fine – Zep will unify the data. thread.get_user_context on any thread will consider the user’s whole memory in relevance calculation[31].
+For truly shared global knowledge (across users or not tied to a user), you can use a separate graph. For instance, a "CompanyPolicies" graph with graph_id = "company_policies". Agents can add data to it (via graph.add with that graph_id) and query it:
+// Search a global graph (not user-specific)
+const res = await zepClient.graph.search({
+  graph_id: "company_policies",
+  query: "password policy length",
+  scope: "edges"
+});
+This would retrieve facts from the global policies graph. You could combine that with user memory. The cookbook example from Zep shows using both user memory and a global graph in a single prompt[78][79]: - They got user_memory = thread.get_user_context(userThread) - They did a graph.search on a product data graph with the user’s query to get relevant product facts. - Then they concatenated user_memory.context and the product facts into the system prompt for the AI[78][80].
+Following that pattern, you can incorporate multiple knowledge sources. Just be mindful of prompt length and relevance. It’s often good to limit search results (e.g., top 5 facts) and maybe pre-format them as bullet points or a short paragraph when inserting into the prompt.
+4. Memory Analytics & Debugging: You can use search and retrieval not only for answering user questions but also for debugging the agent’s reasoning. For example, if the agent made a statement, you could search the memory to see if that statement was grounded in stored facts. Zep also provides tools like graph.search(..., reranker: "node_distance", center_node_uuid: X) to find facts related to a specific node, or graph.search(..., reranker: "episode_mentions", center_node_uuid: Y) to prioritize facts mentioned in a certain episode – these are advanced but can be used to trace back why an agent knows something.
+Interpreting and Presenting Retrieved Memory
+When you retrieve memory (via context or search), you’ll usually get raw text (facts) that might be directly included in prompts. Some tips: - The context bullet points from get_user_context are generally ready-to-use in a prompt. They read like factual statements[56]. - If you do custom searches, you might want to format the results. For example, if you get edge facts, you can join them or enumerate them in a prompt. In the earlier example from Zep’s recipe, they built a string like "Below are some facts related to X:\n" and then listed each fact on a new line[79][81]. - Watch out for duplicates or contradictory facts. If your memory has two edges that conflict (one invalidated and one current), get_user_context usually will surface the current one. But a raw search might return both. You may need to check timestamps or rely on fact validity – e.g., exclude edges with invalid_at set (the search filter for timestamp can help, or skip ones containing words like "no longer"). - If a fact seems irrelevant or too sensitive to include, you can choose to filter it out before prompting the LLM. You have control after retrieval to decide which facts to use.
+By thoughtfully incorporating these memory retrievals, your AI agents in the Next.js app will exhibit continuity: they will “remember” user preferences (like always using tables if that’s the user’s wish), avoid repeating questions the user already answered, and use historical context to inform current tasks (e.g., recalling prior steps in a coding session).
+Next.js + TypeScript Code Recipes
+This section provides concise “recipe” style examples for common memory operations in a Next.js + TS context:
+•	Recipe 1: Initializing Zep in Next.js – shown in the installation section (creating zepClient singleton). Use an importable client to avoid re-initializing for every request.
+•	Recipe 2: Storing User Style Preference – e.g., when a user toggles a UI option for output format:
+ 	// Suppose a user toggles a preference in the UI and we call an API route:
+import zepClient from "@/utils/zepClient";
+export default async function handler(req, res) {
+  const userId = req.body.userId;
+  const prefersTables = req.body.prefersTables;  // boolean from user input
+  const factText = prefersTables 
+    ? "User prefers tables for data display." 
+    : "User prefers bullet points for data display.";
+  await zepClient.graph.add({ user_id: userId, type: "text", data: factText });
+  res.status(200).send({ status: "Preference stored" });
+}
+ 	This will add or update the preference in memory. If the user flips the preference later, the new fact will invalidate the old one as described.
+•	Recipe 3: Extracting Preferences from Memory – in an agent logic:
+ 	async function getFormatPreference(userId: string): Promise<"tables"|"bullets"|null> {
+  const res = await zepClient.graph.search({
+    user_id: userId,
+    query: "prefers", scope: "edges",
+    search_filters: { edge_types: ["PREFERS"] }
+  });
+  const fact = res.edges?.[0]?.fact.toLowerCase() || "";
+  if (!fact) return null;
+  if (fact.includes("tables")) return "tables";
+  if (fact.includes("bullet")) return "bullets";
+  return null;
+}
+// Usage:
+const pref = await getFormatPreference(userId);
+if (pref === "tables") { /* format output as table */ }
+ 	Here we searched for any PREFERS edge and parsed it. This is a simple text parse; depending on how facts are phrased, adjust accordingly.
+•	Recipe 4: Storing Memory on File Upload – Suppose you have a Next.js API route for uploading a file:
+ 	export const config = { api: { bodyParser: false } }; // if using file streams
+import formidable from "formidable"; 
+import { readFileSync } from "fs";
+import zepClient from "@/utils/zepClient";
+export default async function uploadHandler(req, res) {
+  const form = new formidable.IncomingForm();
+  form.parse(req, async (err, fields, files) => {
+    const userId = fields.userId;
+    const file = files.uploadedFile;
+    const text = extractTextFromFile(file);  // implement extraction (depends on file type)
+    // chunk the text if large:
+    const chunks = chunkText(text, 8000);
+    for (const chunk of chunks) {
+      await zepClient.graph.add({ user_id: userId, type: "text", data: chunk });
+    }
+    res.status(200).send({ status: "File memory added", chunks: chunks.length });
+  });
+}
+ 	This stores the file’s content into the user’s memory. Later you can search the graph for info from that file when relevant.
+•	Recipe 5: Retrieving Relevant Context for Agent Task – e.g., before the agent attempts a complex task, get memory:
+ 	async function getContextForTask(userId: string, threadId: string, taskDescription: string) {
+  // 1. Get user memory context from Zep
+  const mem = await zepClient.thread.get_user_context({ thread_id: threadId });
+  // 2. Optionally search for any specific knowledge related to the task
+  const searchRes = await zepClient.graph.search({
+    user_id: userId, query: taskDescription, scope: "edges", limit: 5
+  });
+  // 3. Combine results
+  let context = mem.context || "";
+  for (const edge of searchRes.edges || []) {
+    if (!context.includes(edge.fact)) {
+      context += "\n- " + edge.fact;
+    }
+  }
+  return context;
+}
+ 	This function combines the general context block with additional facts specifically related to the task query. The agent can then include this in the prompt for the task.
+Each recipe above demonstrates how to use the Zep SDK in TypeScript. Ensure you handle promises with await or .then. In Next.js API routes or server actions, you can use await freely. Also consider error handling (try/catch around Zep calls) – e.g., network issues or invalid API key errors should be caught.
+Zep API Endpoint Reference (Summary)
+For completeness, here is a summary of the main Zep SDK methods (endpoints) you'll use, along with their purpose, parameters, and return types/behavior:
+•	Users API: Manage user identities in memory.
+•	user.add({ user_id, first_name?, last_name?, email? }) – Creates a new User in Zep[82]. Returns a User object (with fields like user_id, names, etc.).
+•	user.get(userId) – Retrieves the User object by ID[83] (or null if not found).
+•	user.update({ user_id, first_name?, last_name?, email? }) – Updates the user’s info[28]. Returns updated User.
+•	user.delete(userId) – Deletes the user and all associated memory (threads, graph)[84]. Typically returns nothing (or a result object with status).
+•	user.get_threads(userId) – Lists all Threads for that user[85]. Returns an array of Thread info (thread IDs, maybe metadata).
+•	user.list({ page_size, page_number }) – Lists users in your project (paginated)[86]. Useful for admin interfaces. Returns a page of users.
+•	Threads API: Manage conversation threads.
+•	thread.create({ thread_id, user_id }) – Creates a new thread under the given user[29]. Returns a Thread object (with thread_id, user_id, etc.).
+•	thread.add_messages(threadId, { messages: Message[] }) – Appends one or multiple messages to the thread[87][88]. Each Message should include role, content, and optionally name. Returns maybe an acknowledgment or the added messages; the main effect is side-effect (messages stored).
+•	thread.get(threadId) – Retrieves all messages in the thread[89]. Returns something like { messages: Message[] } sorted by time.
+•	thread.get_user_context({ thread_id, summarized? }) – Retrieves relevant memory context for the thread (as explained)[7]. Returns a Memory object containing e.g. context (string), and possibly lists of messages or facts depending on config. Usually you just use .context. You might pass a flag to get basic vs summarized (check SDK; by default it’s summarized[57]).
+•	thread.delete(threadId) – Deletes the thread and its message history[51]. Returns nothing. (Does not wipe the user’s graph data.)
+•	thread.list_all({ page_size, page_number }) – Lists all threads across users (paginated)[90]. Returns e.g. { threads: Thread[], page_number, total_pages, ... }.
+•	Graph API: Manage graphs and graph data.
+•	graph.create({ graph_id, name?, description? }) – Creates a new standalone graph (if you need one not attached to a specific user)[91][92]. Returns a Graph object (with graph_id and info).
+•	graph.add({ user_id or graph_id, type, data }) – Adds a piece of data to the specified graph (user’s graph if user_id given, otherwise a named graph)[93][94]. type is "text", "message", or "json". data is the content string. Returns an Episode object representing the new episode[39] (with uuid, timestamps, maybe the parsed content).
+•	graph.add_fact_triple({ user_id or graph_id, fact, fact_name, source_node_name, target_node_name, ... }) – Inserts a custom fact triple (edge) as described[43]. You can optionally include additional fields like source_node_summary, target_node_summary, or temporal validity in the call (check SDK reference)[45]. Returns probably an Episode or an Edge (the documentation suggests it builds an episode too).
+•	graph.search({ user_id or graph_id, query, scope?, limit?, reranker?, mmr_lambda?, search_filters?, bfs_origin_node_uuids? }) – Searches the graph for relevant edges/nodes/episodes[63]. We covered parameters in detail. Key ones: query (string), scope ("edges" default), filters for including/excluding types and timestamp range[71]. Returns a SearchResult object which may contain edges, nodes, or episodes arrays depending on scope. Each result item has fields as discussed (e.g. fact for edges, summary for nodes, etc.) plus score[77].
+•	graph.clone({ source_graph_id or source_user_id, target_graph_id or target_user_id }) – Clones an entire graph[95][96]. This is advanced but useful if you want to duplicate memory (e.g., template graph to new user). Returns new Graph or user info (with new IDs).
+•	graph.episode.delete({ uuid }) – Deletes an episode node by UUID (and its edges)[46]. Returns nothing (success usually indicated by no error).
+•	graph.edge.delete({ uuid }) – Deletes an edge (fact) by UUID[48]. Returns nothing.
+•	(Note: There is currently no graph.node.delete (node deletion) as of v3, aside from what happens automatically when orphaned[50].)
+•	Other/Misc:
+•	Message Object: If needed, the SDK might export a Message type or builder. In Python, they have Message(role, content, name)[87]. In TS, you likely can just use a plain object as shown. The roles expected are "user", "assistant", and possibly "system" if you ever wanted to store system prompts (not usually needed to store).
+•	Fact Rating: There are APIs to set a fact rating instruction when creating a graph (e.g., fact_rating_instruction parameter) and example ratings[97]. This is optional and more for fine-tuning what facts are considered important. If you supply these on graph creation, Zep will classify facts as high/medium/low importance, and you can then filter by min_fact_rating in retrieval[74]. The usage would be at graph creation: graph.create({ graph_id, ..., fact_rating_instruction: "...", fact_rating_examples: {high: "...", medium: "...", low: "..."} }).
+•	Default Ontology: Zep has a concept of a default ontology for certain entity types and relations (for example, it might by default know that an email address string in data should link to the user). This is usually fine to leave on. There is a way to disable default ontology on a user basis if needed[98], but unless you have custom graph schema needs, you can use Zep as is.
+With the above reference, you have a full toolkit to integrate Zep Memory into your Next.js application. Always refer to the latest Zep documentation for any new features or changes (Zep is actively developed, as seen by recent releases[99], so new capabilities like node deletion might appear in the future).
+Best Practices and Advanced Tips
+To conclude, here are some best practices to ensure optimal use of Zep memory in your AI coder agent:
+•	Keep Queries Focused: When retrieving memory, ask specific questions. For example, search for "user prefers format" instead of a very broad "preferences". This improves speed and relevance[65].
+•	Leverage Summarization: Use get_user_context to avoid overloading the LLM with too much raw text. The summarized context is often enough and is faster to get (Zep’s summarized context is typically available within 200ms)[58].
+•	Memory Scope Management: Not every conversation turn needs the entire memory. If the conversation is in a narrow context, you might rely on just the last few messages and a few facts. However, when a new topic starts, definitely pull in memory to avoid redundant questions.
+•	Regular Cleanup: If your app allows long-running usage, periodically consider cleaning or archiving very old data that no longer matters (or using Zep’s fact ratings to ignore low-importance facts). This keeps the memory graph concise. Zep is built to handle large graphs, but unbounded growth might include stale info. At minimum, if a user explicitly says something is no longer relevant, consider deleting that from the graph.
+•	Monitor Memory Growth: You can use user.get_threads and thread.get to see how many messages are piling up, or search the graph for number of edges/nodes (not directly given, but you can perhaps do a broad search). If needed, you can summarize or compress memory (though Zep does a lot automatically, like summarizing older chats behind the scenes).
+•	Security: Treat the memory store as an extension of your database. Don’t put secrets or highly sensitive data unless necessary, and ensure your API key is secure. Zep Cloud encrypts data at rest (per their docs) and isolates project data, but always follow best practices (e.g., if a user asks the bot to store a password, maybe decide not to store that at all).
+•	Multi-Agent Coordination: If multiple agents concurrently access the memory, consider using locks or designing idempotent operations. For instance, if two agents might add the same fact at once, you might get duplicate edges. Zep often de-duplicates by merging identical facts/nodes, but it’s not guaranteed for slightly varied wording. It’s not usually a big issue, but just be aware.
+•	Version Updates: Zep’s team is actively improving the service (e.g., adding features like node deletion or new rerankers). Keep an eye on the changelog. Upgrading the SDK might bring new methods or slight changes in return formats (for example, the introduction of the edges vs nodes vs episodes keys in search results, or new fields like confidence). The documentation at help.getzep.com[100] is comprehensive and kept up to date.
+By following this guide, your Sidekick OS styled Next.js app’s AI agents will be equipped with robust long-term memory. They will recall user preferences (e.g. always using tables when the user likes them), maintain context across sessions, and utilize stored knowledge (like documents or code snippets provided by the user) to deliver smarter and more personalized assistance.
+With Zep’s MemoryGraph, the more your users engage, the more the assistant learns about their world – resulting in a truly intelligent and adaptive coding sidekick.
+________________________________________
+[1] [2] [12] [15] [23] [59] [99] GitHub - getzep/zep-js: Build Agents That Recall What Matters. Systematically engineer relevant context from chat history & business data. (TypeScript Client)
+https://github.com/getzep/zep-js
+[3] [19] [22] [53] [60] [61] [62] [63] [64] [65] [66] [67] [68] [69] [70] [71] [72] [73] [77] Searching the Graph | Zep Documentation
+https://help.getzep.com/searching-the-graph
+[4] [6] [18] [20] [21] [91] [92] Graph Overview | Zep Documentation
+https://help.getzep.com/graph-overview
+[5] [25] [29] [31] [51] [89] [90] Threads | Zep Documentation
+https://help.getzep.com/threads
+[7] [30] [55] [56] [57] [58] [75] [76] [87] [88] Quickstart | Zep Documentation
+https://help.getzep.com/quickstart
+[8] [9] [74] [97] Utilizing Facts and Summaries | Zep Documentation
+https://help.getzep.com/facts
+[10] [11] Zep vs Graph RAG | Zep Documentation
+https://help.getzep.com/docs/building-searchable-graphs/zep-vs-graph-rag
+[13] Building a Chatbot with Zep | Zep Documentation
+https://help.getzep.com/walkthrough
+[14] Install SDKs | Zep Documentation
+https://help.getzep.com/install-sdks
+[16] [17] Zep Cloud Memory | ️ Langchain
+https://js.langchain.com/docs/integrations/memory/zep_memory_cloud/
+[24] [26] [27] [28] [52] [82] [83] [84] [85] [86] [98] Users | Zep Documentation
+https://help.getzep.com/users
+[32] [33] [34] [35] [36] [37] [38] [39] [40] [41] [42] [43] [44] [45] [93] [94] [95] [96] Adding Data to the Graph | Zep Documentation
+https://help.getzep.com/adding-data-to-the-graph
+[46] [47] [48] [49] [50] [54] Deleting Data from the Graph | Zep Documentation
+https://help.getzep.com/deleting-data-from-the-graph
+[78] [79] [80] [81] Share Memory Across Users Using Graphs | Zep Documentation
+https://help.getzep.com/cookbook/how-to-share-memory-across-users-using-graphs
+[100] Welcome to Zep! | Zep Documentation
+https://help.getzep.com/overview

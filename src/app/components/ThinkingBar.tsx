@@ -16,12 +16,8 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import {
-  useActivityStore,
-  type ActivityChip,
-  type ActivityTimelineEntry,
-} from "@/app/components/useActivityStore";
-import type { ActivityStatus } from "@/types";
+import { useActivityStore, type ActivityChip } from "@/app/components/useActivityStore";
+import type { ActivityStatus, ActivityTimelineEntry } from "@/types";
 
 type ThinkingBarProps = {
   onStop: () => void;
@@ -185,12 +181,18 @@ const ThinkingBar = memo(function ThinkingBar(props: ThinkingBarProps) {
   const [isVisible, setIsVisible] = useState(false);
 
   useEffect(() => {
+    let nextVisible = isVisible;
+
     if (status !== "idle") {
-      setIsVisible(true);
+      nextVisible = true;
     } else if (!currentActivity) {
-      setIsVisible(false);
+      nextVisible = false;
     }
-  }, [currentActivity, status]);
+
+    if (nextVisible !== isVisible) {
+      setIsVisible(nextVisible);
+    }
+  }, [currentActivity, isVisible, status]);
 
   const handleStopClick = useCallback(() => {
     onStop();

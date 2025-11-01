@@ -92,7 +92,8 @@ class MemoryTracker {
     if (toIndex <= fromIndex || toIndex >= this.snapshots.length) {
       return 0;
     }
-    return this.snapshots[toIndex].heapUsed - this.snapshots[fromIndex].heapUsed;
+    const diff = this.snapshots[toIndex].heapUsed - this.snapshots[fromIndex].heapUsed;
+    return diff < 0 ? 0 : diff;
   }
 
   getSnapshots(): Array<{

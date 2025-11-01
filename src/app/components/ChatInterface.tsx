@@ -11,8 +11,11 @@ import React, {
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport, type UIMessage } from 'ai';
 import ThinkingBar from '@/app/components/ThinkingBar';
-import ThinkingDetails from '@/app/components/ThinkingDetails';
 import { useActivityStore } from '@/app/components/useActivityStore';
+import ConversationTimeline from '@/app/components/ConversationTimeline';
+import Timeline from '@/components/Timeline';
+import Legend from '@/components/Legend';
+import { FALLBACK_TIMELINE_EVENTS, mapActivityTimelineToEvents } from '@/lib/timeline';
 import type { ToolInvocation } from '@/types';
 import {
   isActivityDoneMessage,
@@ -142,7 +145,7 @@ export default function ChatInterface(props?: ChatInterfaceProps) {
   const className = props?.className;
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [inputValue, setInputValue] = useState('');
-  const [activeView, setActiveView] = useState<'chat' | 'canvas'>('chat');
+  const [activeView, setActiveView] = useState<'chat' | 'timeline' | 'activities'>('chat');
 
   const transport = useMemo(
     () => new DefaultChatTransport<SideKickMessage>({ api: '/api/agent' }),
@@ -161,6 +164,7 @@ export default function ChatInterface(props?: ChatInterfaceProps) {
   const markBlockedStatus = useActivityStore((state) => state.markBlocked);
   const currentActivityId = useActivityStore((state) => state.currentActivityId);
   const activityStatus = useActivityStore((state) => state.status);
+  const timelineEntries = useActivityStore((state) => state.timeline);
   const processedActivityMessagesRef = useRef(new Set<string>());
   const processedUserMessagesRef = useRef(new Set<string>());
   const processedLegacyEventsRef = useRef(new Set<string>());
@@ -173,12 +177,115 @@ export default function ChatInterface(props?: ChatInterfaceProps) {
   const completionActivityRef = useRef<string | null>(null);
   const lastUserPromptRef = useRef<string | null>(null);
   const syntheticStepsRef = useRef({ planning: false, searching: false, summarizing: false });
+  const activitiesEvents = useMemo(() => {
+    const mapped = mapActivityTimelineToEvents(timelineEntries, { includeFallback: false });
+    if (mapped.length > 0) {
+      return mapped;
+    }
+    return FALLBACK_TIMELINE_EVENTS;
+  }, [timelineEntries]);
+  const usingActivitiesFallback = timelineEntries.length === 0;
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
   useEffect(() => {
+    type SyntheticStepKey = 'planning' | 'searching' | 'summarizing';
+    const STEP_TITLES: Record<SyntheticStepKey, string> = {
+      planning: 'Planning',
+      searching: 'Searching',
+      summarizing: 'Summarizing',
+    };
+
+    const resetSyntheticSteps = () => {
+      syntheticStepsRef.current = { planning: false, searching: false, summarizing: false };
+    };
+
+    const sendSyntheticStepUpdate = (
+      activityId: string,
+      key: SyntheticStepKey,
+      text: string,
+    ) => {
+      ingestActivityUpdate({
+        role: 'assistant',
+        id: `${activityId}:step-update:${key}:${Date.now()}`,
+        type: 'activity.update',
+        activityId,
+        update: {
+          kind: 'step.update',
+          text,
+        },
+      });
+    };
+
+    const startSyntheticStep = (
+      activityId: string,
+      key: SyntheticStepKey,
+      options?: { initialUpdate?: string },
+    ) => {
+      if (syntheticStepsRef.current[key]) {
+        if (options?.initialUpdate) {
+          sendSyntheticStepUpdate(activityId, key, options.initialUpdate);
+        }
+        return;
+      }
+
+      syntheticStepsRef.current[key] = true;
+      ingestActivityUpdate({
+        role: 'assistant',
+        id: `${activityId}:step:${key}`,
+        type: 'activity.update',
+        activityId,
+        update: {
+          kind: 'step.start',
+          title: STEP_TITLES[key],
+        },
+      });
+
+      if (options?.initialUpdate) {
+        sendSyntheticStepUpdate(activityId, key, options.initialUpdate);
+      }
+    };
+
+    const startPlanningStep = (activityId: string) => {
+      if (syntheticStepsRef.current.planning) {
+        return;
+      }
+      const prompt = lastUserPromptRef.current?.trim();
+      const summary = prompt ? `Understanding request: "${truncateSummary(prompt)}"` : 'Reviewing task…';
+      startSyntheticStep(activityId, 'planning', { initialUpdate: summary });
+    };
+
+    const startSearchingStep = (activityId: string, initialUpdate?: string) => {
+      if (!syntheticStepsRef.current.searching) {
+        startSyntheticStep(activityId, 'searching', {
+          initialUpdate: initialUpdate ?? 'Gathering information…',
+        });
+        return;
+      }
+
+      if (initialUpdate) {
+        sendSyntheticStepUpdate(activityId, 'searching', initialUpdate);
+      }
+    };
+
+    const startSummarizingStep = (activityId: string, initialUpdate?: string) => {
+      if (!syntheticStepsRef.current.searching) {
+        startSearchingStep(activityId, 'Reviewing internal knowledge…');
+      }
+      if (!syntheticStepsRef.current.summarizing) {
+        startSyntheticStep(activityId, 'summarizing', {
+          initialUpdate: initialUpdate ?? 'Preparing summary…',
+        });
+        return;
+      }
+
+      if (initialUpdate) {
+        sendSyntheticStepUpdate(activityId, 'summarizing', initialUpdate);
+      }
+    };
+
     const ensureSyntheticActivity = (sourceId: string): string => {
       let activityId = syntheticActivityIdRef.current;
       if (!activityId) {
@@ -196,7 +303,9 @@ export default function ChatInterface(props?: ChatInterfaceProps) {
             startedAt: new Date().toISOString(),
           },
         });
+        resetSyntheticSteps();
       }
+      startPlanningStep(activityId);
       return activityId;
     };
 
@@ -223,6 +332,7 @@ export default function ChatInterface(props?: ChatInterfaceProps) {
           return;
         }
 
+        startSearchingStep(activityId);
         processedLegacyStagesRef.current.add(stageKey);
         ingestActivityUpdate({
           role: 'assistant',
@@ -244,6 +354,7 @@ export default function ChatInterface(props?: ChatInterfaceProps) {
       }
 
       processedLegacyStagesRef.current.add(stageKey);
+      startSummarizingStep(activityId, derivedSummary ?? 'Preparing summary…');
       ingestActivityUpdate({
         role: 'assistant',
         id: eventId,
@@ -306,6 +417,7 @@ export default function ChatInterface(props?: ChatInterfaceProps) {
           return;
         }
 
+        startSearchingStep(activityId);
         processedLegacyStagesRef.current.add(stageKey);
         ingestActivityUpdate({
           role: 'assistant',
@@ -327,6 +439,7 @@ export default function ChatInterface(props?: ChatInterfaceProps) {
         }
 
         processedLegacyStagesRef.current.add(stageKey);
+        startSummarizingStep(activityId, summary ?? 'Preparing summary…');
         ingestActivityUpdate({
           role: 'assistant',
           id: eventId,
@@ -347,6 +460,9 @@ export default function ChatInterface(props?: ChatInterfaceProps) {
       }
 
       processedLegacyStagesRef.current.add(stageKey);
+      if (stage === 'tool.error') {
+        startSummarizingStep(activityId, errorText ?? 'Encountered an error.');
+      }
       ingestActivityUpdate({
         role: 'assistant',
         id: eventId,
@@ -373,7 +489,7 @@ export default function ChatInterface(props?: ChatInterfaceProps) {
           lastUserMessageIdRef.current = message.id;
           hasNativeActivityRef.current = false;
           completionActivityRef.current = null;
-          syntheticStepsRef.current = { planning: false, searching: false, summarizing: false };
+          resetSyntheticSteps();
           resetActivityState();
         }
         continue;
@@ -388,6 +504,7 @@ export default function ChatInterface(props?: ChatInterfaceProps) {
         syntheticActivityIdRef.current = message.id;
         syntheticActivityStartRef.current = Date.parse(message.activity.startedAt) || Date.now();
         completionActivityRef.current = null;
+        resetSyntheticSteps();
         resetActivityState();
         ingestActivityMessage(message);
         continue;
@@ -493,7 +610,9 @@ export default function ChatInterface(props?: ChatInterfaceProps) {
       if (event.key === '1') {
         setActiveView('chat');
       } else if (event.key === '2') {
-        setActiveView('canvas');
+        setActiveView('timeline');
+      } else if (event.key === '3') {
+        setActiveView('activities');
       }
     };
 
@@ -532,6 +651,7 @@ export default function ChatInterface(props?: ChatInterfaceProps) {
     syntheticActivityStartRef.current = null;
     completionActivityRef.current = null;
     hasNativeActivityRef.current = false;
+    syntheticStepsRef.current = { planning: false, searching: false, summarizing: false };
     const retryPrompt = lastUserPromptRef.current?.trim();
     if (retryPrompt) {
       void sendMessage({ text: retryPrompt });
@@ -549,15 +669,90 @@ export default function ChatInterface(props?: ChatInterfaceProps) {
     [messages],
   );
 
+  let mainContent: React.ReactNode;
+
+  if (activeView === 'chat') {
+    mainContent = visibleMessages.length === 0 ? (
+      <div className="flex flex-col items-center justify-center h-96 text-center">
+        <div className="text-5xl mb-4">🚀</div>
+        <h2 className="text-3xl font-bold text-white mb-2">Welcome to SideKick</h2>
+        <p className="text-lg text-slate-300 max-w-md">
+          Chat with me about any topic. I&apos;ll use specialized skills to help you.
+        </p>
+      </div>
+    ) : (
+      <>
+        {visibleMessages.map((message) => {
+          const textContent = extractMessageText(message.parts);
+          return (
+            <div
+              key={message.id}
+              className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+            >
+              <div
+                className={`max-w-2xl px-4 py-3 rounded-lg ${
+                  message.role === 'user'
+                    ? 'bg-blue-600 text-white rounded-br-none'
+                    : 'bg-slate-800 text-white rounded-bl-none'
+                }`}
+              >
+                <p className="text-sm leading-relaxed break-words whitespace-pre-wrap">
+                  {textContent}
+                </p>
+              </div>
+            </div>
+          );
+        })}
+        {isLoading && (
+          <div className="flex justify-start">
+            <div className="bg-slate-800 px-4 py-3 rounded-lg rounded-bl-none">
+              <div className="flex space-x-2">
+                <div className="w-2 h-2 bg-slate-400 rounded-full animate-pulse"></div>
+                <div
+                  className="w-2 h-2 bg-slate-400 rounded-full animate-pulse"
+                  style={{ animationDelay: '0.1s' }}
+                ></div>
+                <div
+                  className="w-2 h-2 bg-slate-400 rounded-full animate-pulse"
+                  style={{ animationDelay: '0.2s' }}
+                ></div>
+              </div>
+            </div>
+          </div>
+        )}
+        <div ref={messagesEndRef} />
+      </>
+    );
+  } else if (activeView === 'timeline') {
+    mainContent = (
+      <ConversationTimeline onViewActivities={() => setActiveView('activities')} />
+    );
+  } else {
+    mainContent = (
+      <div className="space-y-4">
+        {usingActivitiesFallback && (
+          <div className="rounded-xl border border-dashed border-slate-700 bg-slate-900/60 px-4 py-3 text-sm text-slate-300">
+            Activities will populate as the agent works. Viewing sample run until live data arrives.
+            <span className="block text-xs text-slate-400">
+              Switch to Timeline to review past runs once history is available.
+            </span>
+          </div>
+        )}
+        <Legend />
+        <Timeline events={activitiesEvents} />
+      </div>
+    );
+  }
+
   return (
     <div
       className={cn(
-        'flex min-h-[500px] flex-1 flex-col overflow-hidden rounded-xl border border-slate-800 bg-gradient-to-br from-slate-900 to-slate-800 shadow-lg',
+        'relative flex h-full md:h-screen flex-1 flex-col overflow-hidden rounded-xl border border-slate-800 bg-gradient-to-br from-slate-900 to-slate-800 shadow-lg',
         className,
       )}
     >
-      <div className="border-b border-slate-800 bg-slate-900/60">
-        <div className="max-w-4xl mx-auto flex items-center justify-between px-6 py-4">
+      <div className="flex-shrink-0 border-b border-slate-800 bg-slate-900/80 backdrop-blur supports-[backdrop-filter]:backdrop-blur">
+        <div className="max-w-4xl mx-auto flex items-center justify-between gap-3 px-6 py-4">
           <div className="flex items-center gap-2 rounded-full bg-slate-800 p-1 text-sm text-slate-300">
             <button
               type="button"
@@ -574,91 +769,39 @@ export default function ChatInterface(props?: ChatInterfaceProps) {
             </button>
             <button
               type="button"
-              onClick={() => setActiveView('canvas')}
+              onClick={() => setActiveView('timeline')}
               className={cn(
                 'flex items-center gap-2 rounded-full px-4 py-1 transition-colors',
-                activeView === 'canvas'
+                activeView === 'timeline'
                   ? 'bg-blue-600 text-white shadow'
                   : 'hover:bg-slate-700/80',
               )}
             >
-              <span>Canvas</span>
+              <span>Timeline</span>
               <span className="hidden text-xs font-medium opacity-80 sm:inline">⌘2</span>
             </button>
+            <button
+              type="button"
+              onClick={() => setActiveView('activities')}
+              className={cn(
+                'flex items-center gap-2 rounded-full px-4 py-1 transition-colors',
+                activeView === 'activities'
+                  ? 'bg-blue-600 text-white shadow'
+                  : 'hover:bg-slate-700/80',
+              )}
+            >
+              <span>Activities</span>
+              <span className="hidden text-xs font-medium opacity-80 sm:inline">⌘3</span>
+            </button>
           </div>
+          <ThinkingBar onStop={handleStop} onRetry={handleRetry} />
         </div>
       </div>
-      <main className="flex-1 overflow-y-auto">
-        <div className="max-w-4xl mx-auto px-6 py-8 space-y-4">
-          {activeView === 'chat' ? (
-            visibleMessages.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-96 text-center">
-                <div className="text-5xl mb-4">🚀</div>
-                <h2 className="text-3xl font-bold text-white mb-2">Welcome to SideKick</h2>
-                <p className="text-lg text-slate-300 max-w-md">
-                  Chat with me about any topic. I&apos;ll use specialized skills to help you.
-                </p>
-              </div>
-            ) : (
-              <>
-                {visibleMessages.map((message) => {
-                  const textContent = extractMessageText(message.parts);
-                  return (
-                    <div
-                      key={message.id}
-                      className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                    >
-                      <div
-                        className={`max-w-2xl px-4 py-3 rounded-lg ${
-                          message.role === 'user'
-                            ? 'bg-blue-600 text-white rounded-br-none'
-                            : 'bg-slate-800 text-white rounded-bl-none'
-                        }`}
-                      >
-                        <p className="text-sm leading-relaxed break-words whitespace-pre-wrap">
-                          {textContent}
-                        </p>
-                      </div>
-                    </div>
-                  );
-                })}
-                {isLoading && (
-                  <div className="flex justify-start">
-                    <div className="bg-slate-800 px-4 py-3 rounded-lg rounded-bl-none">
-                      <div className="flex space-x-2">
-                        <div className="w-2 h-2 bg-slate-400 rounded-full animate-pulse"></div>
-                        <div
-                          className="w-2 h-2 bg-slate-400 rounded-full animate-pulse"
-                          style={{ animationDelay: '0.1s' }}
-                        ></div>
-                        <div
-                          className="w-2 h-2 bg-slate-400 rounded-full animate-pulse"
-                          style={{ animationDelay: '0.2s' }}
-                        ></div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-                <div ref={messagesEndRef} />
-              </>
-            )
-          ) : (
-            <div className="flex h-96 items-center justify-center gap-4 rounded-lg border border-dashed border-slate-700 bg-slate-900/60 text-center text-slate-300">
-              <div>
-                <h3 className="text-2xl font-semibold text-white">Canvas Workspace</h3>
-                <p className="mt-2 text-sm text-slate-400">
-                  Orchestrator outputs will appear here. Switch back to Chat with the toggle or ⌘1.
-                </p>
-              </div>
-            </div>
-          )}
-        </div>
+      <main className="flex-1 min-h-0 overflow-y-auto scroll-smooth">
+        <div className="max-w-4xl mx-auto space-y-4 px-6 py-8 pb-40">{mainContent}</div>
       </main>
-      <div className="px-6 pb-4">
-        <ThinkingBar onStop={handleStop} onRetry={handleRetry} />
-      </div>
-      <footer className="border-t border-slate-700 bg-slate-900/80 backdrop-blur">
-        <div className="max-w-4xl mx-auto px-6 py-6">
+      <footer className="flex-shrink-0 border-t border-slate-800 bg-slate-900/90 backdrop-blur supports-[backdrop-filter]:backdrop-blur">
+        <div className="max-w-4xl mx-auto px-6 py-4">
           <form onSubmit={handleSubmit} className="flex gap-2">
             <input
               type="text"
@@ -678,7 +821,6 @@ export default function ChatInterface(props?: ChatInterfaceProps) {
           </form>
         </div>
       </footer>
-      <ThinkingDetails />
     </div>
   );
 }

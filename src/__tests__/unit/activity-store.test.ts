@@ -8,6 +8,10 @@ import { useActivityStore } from '@/app/components/useActivityStore';
 
 describe('useActivityStore', () => {
   beforeEach(() => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.clear();
+    }
+    useActivityStore.getState().clearHistory();
     useActivityStore.getState().reset();
   });
 
@@ -81,6 +85,11 @@ describe('useActivityStore', () => {
     expect(state.status).toBe('done');
     expect(state.label).toContain('Completed');
     expect(state.timeline).toHaveLength(5);
+  expect(state.history).toHaveLength(1);
+
+  const [historyEntry] = state.history;
+  expect(historyEntry.phases.length).toBeGreaterThan(0);
+  expect(historyEntry.phases[historyEntry.phases.length - 1].kind).toBe('artifact');
 
     const stepChip = state.chips.find((chip) => chip.kind === 'step');
     expect(stepChip).toBeDefined();
@@ -121,5 +130,6 @@ describe('useActivityStore', () => {
     expect(state.status).toBe('error');
     expect(state.label).toBe('Tool failure');
     expect(state.chips.some((chip) => chip.kind === 'error')).toBe(true);
+    expect(state.history).toHaveLength(0);
   });
 });
