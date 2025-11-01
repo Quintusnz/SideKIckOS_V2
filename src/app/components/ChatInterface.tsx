@@ -690,13 +690,13 @@ export default function ChatInterface(props?: ChatInterfaceProps) {
               className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
               <div
-                className={`max-w-2xl px-4 py-3 rounded-lg ${
+                className={`max-w-3xl px-3 py-2 rounded-lg ${
                   message.role === 'user'
                     ? 'bg-blue-600 text-white rounded-br-none'
                     : 'bg-slate-800 text-white rounded-bl-none'
                 }`}
               >
-                <p className="text-sm leading-relaxed break-words whitespace-pre-wrap">
+                <p className="text-sm leading-snug break-words whitespace-pre-wrap">
                   {textContent}
                 </p>
               </div>
@@ -705,7 +705,7 @@ export default function ChatInterface(props?: ChatInterfaceProps) {
         })}
         {isLoading && (
           <div className="flex justify-start">
-            <div className="bg-slate-800 px-4 py-3 rounded-lg rounded-bl-none">
+            <div className="bg-slate-800 px-3 py-2 rounded-lg rounded-bl-none">
               <div className="flex space-x-2">
                 <div className="w-2 h-2 bg-slate-400 rounded-full animate-pulse"></div>
                 <div
@@ -752,7 +752,7 @@ export default function ChatInterface(props?: ChatInterfaceProps) {
       )}
     >
       <div className="flex-shrink-0 border-b border-slate-800 bg-slate-900/80 backdrop-blur supports-[backdrop-filter]:backdrop-blur">
-        <div className="max-w-4xl mx-auto flex items-center justify-between gap-3 px-6 py-4">
+        <div className="max-w-6xl mx-auto flex items-center justify-between gap-3 px-6 py-2.5">
           <div className="flex items-center gap-2 rounded-full bg-slate-800 p-1 text-sm text-slate-300">
             <button
               type="button"
@@ -798,10 +798,10 @@ export default function ChatInterface(props?: ChatInterfaceProps) {
         </div>
       </div>
       <main className="flex-1 min-h-0 overflow-y-auto scroll-smooth">
-        <div className="max-w-4xl mx-auto space-y-4 px-6 py-8 pb-40">{mainContent}</div>
+        <div className="mx-auto space-y-2 px-6 py-4 pb-32 max-w-6xl">{mainContent}</div>
       </main>
       <footer className="flex-shrink-0 border-t border-slate-800 bg-slate-900/90 backdrop-blur supports-[backdrop-filter]:backdrop-blur">
-        <div className="max-w-4xl mx-auto px-6 py-4">
+        <div className="max-w-6xl mx-auto px-6 py-2.5">
           <form onSubmit={handleSubmit} className="flex gap-2">
             <input
               type="text"
